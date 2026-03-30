@@ -2,7 +2,7 @@ import glfw
 import glm
 import math
 
-import state
+from . import state
 
 
 def key_event(window, key, scancode, action, mods):

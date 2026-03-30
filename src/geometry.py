@@ -152,10 +152,10 @@ def make_sea_circle(radius=1.0, N=64):
 
 # ─── Load all geometry (runs at import time) ──────────────────────────────────
 
-start_boat,    count_boat    = load_obj('barco.obj')
-start_island,  count_island  = load_obj('island1.obj')
-start_lh,      count_lh      = load_obj('lighthouse.obj')
-start_volcano, count_volcano = load_obj('volcano_rock.obj')
+start_boat,    count_boat    = load_obj('models/barco.obj')
+start_island,  count_island  = load_obj('models/island1.obj')
+start_lh,      count_lh      = load_obj('models/lighthouse.obj')
+start_volcano, count_volcano = load_obj('models/volcano_rock.obj')
 start_sun,     count_sun     = make_sun(R_inner=.8, R_outer=1.5, N=12)
 start_fin,     count_fin     = make_shark_fin()
 start_sea,     count_sea     = make_sea_circle(radius=1.0, N=64)

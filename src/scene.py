@@ -3,8 +3,8 @@ import glm
 import math
 import numpy as np
 
-import state
-import geometry
+from . import state
+from . import geometry
 
 
 def model_matrix(angle=0.0, rx=0.0, ry=1.0, rz=0.0,

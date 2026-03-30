@@ -3,12 +3,12 @@ from OpenGL.GL import *
 import numpy as np
 import glm
 import ctypes
-from shader_s import Shader
+from src.shader_s import Shader
 
-import state
-import geometry
-import input as inp
-from scene import Scene
+from src import state
+from src import geometry
+from src import input as inp
+from src.scene import Scene
 
 
 # ─── Window ───────────────────────────────────────────────────────────────────
@@ -26,7 +26,7 @@ glfw.make_context_current(window)
 
 # ─── Shaders ──────────────────────────────────────────────────────────────────
 
-ourShader = Shader("vertex_shader.vs", "fragment_shader.fs")
+ourShader = Shader("shaders/vertex_shader.vs", "shaders/fragment_shader.fs")
 ourShader.use()
 program = ourShader.getProgram()
 
