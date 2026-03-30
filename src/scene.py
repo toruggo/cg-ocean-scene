@@ -63,10 +63,10 @@ class Scene:
         self.volcano_smoke = ParticleEmitter(
             base_pos   = (self.VOLCANO_POS[0], self.VOLCANO_POS[1] + 5.6, self.VOLCANO_POS[2]),
             color      = (0.30, 0.28, 0.28, 1.0),
-            spawn_rate = 1.0,
-            lifetime   = 4.0,
+            spawn_rate = .3,
+            lifetime   = 10.0,
             rise_speed = 0.5,
-            max_scale  = 0.1,
+            max_scale  = 0.7,
         )
 
     # ── View / projection ─────────────────────────────────────────────────────
