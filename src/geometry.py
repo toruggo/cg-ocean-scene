@@ -194,7 +194,7 @@ def make_sea_circle(radius=1.0, N=64):
 
 boat_parts = load_obj_parts('models/barco_partes_separadas.obj')
 start_island,  count_island  = load_obj('models/island1.obj')
-start_lh,      count_lh      = load_obj('models/lighthouse.obj')
+lh_parts = load_obj_parts('models/lighthouse_partes_separadas.obj')
 start_volcano, count_volcano = load_obj('models/volcano_rock.obj')
 start_sun,     count_sun     = make_sun(R_inner=.8, R_outer=1.5, N=12)
 start_fin,     count_fin     = make_shark_fin()

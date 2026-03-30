@@ -91,13 +91,22 @@ class Scene:
                          sx=s, sy=s, sz=s))
         glDrawArrays(GL_TRIANGLES, geometry.start_island, geometry.count_island)
 
+    LH_PART_COLORS = {
+        'lighthouse_body':      (0.8, 0.1, 0.1, 1.0),   # red
+        'Cylinder.001':         (0.1, 0.3, 0.9, 1.0),   # blue
+        'lighthouse_top_floor': (0.1, 0.8, 0.1, 1.0),   # green
+        'lighthouse_light':     (1.0, 0.9, 0.1, 1.0),   # yellow
+    }
+
     def draw_lighthouse(self):
-        glUniform4f(self.loc_color, 0.95, 0.95, 0.92, 1.0)
         s = self.LIGHTHOUSE_SCALE
-        glUniformMatrix4fv(self.loc_model, 1, GL_TRUE,
-            model_matrix(tx=self.LIGHTHOUSE_POS[0], ty=self.LIGHTHOUSE_POS[1], tz=self.LIGHTHOUSE_POS[2],
-                         sx=s, sy=s, sz=s))
-        glDrawArrays(GL_TRIANGLES, geometry.start_lh, geometry.count_lh)
+        mat = model_matrix(tx=self.LIGHTHOUSE_POS[0], ty=self.LIGHTHOUSE_POS[1], tz=self.LIGHTHOUSE_POS[2],
+                           sx=s, sy=s, sz=s)
+        glUniformMatrix4fv(self.loc_model, 1, GL_TRUE, mat)
+        for name, (start, count) in geometry.lh_parts.items():
+            color = self.LH_PART_COLORS.get(name, (1.0, 1.0, 1.0, 1.0))
+            glUniform4f(self.loc_color, *color)
+            glDrawArrays(GL_TRIANGLES, start, count)
 
     def draw_volcano(self):
         glUniform4f(self.loc_color, 0.35, 0.30, 0.28, 1.0)
