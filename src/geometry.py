@@ -51,6 +51,46 @@ def load_obj(filename):
     return start, len(vertices_list) - start
 
 
+def load_obj_parts(filename):
+    """Load OBJ with named objects. Returns {name: (start, count)} per part."""
+    raw_verts = []
+    current_name = '__default__'
+    groups = []       # list of (name, [face_list])
+    current_faces = []
+
+    for line in open(filename, 'r'):
+        if line.startswith('#'):
+            continue
+        values = line.split()
+        if not values:
+            continue
+        if values[0] == 'v':
+            raw_verts.append(values[1:4])
+        elif values[0] in ('o', 'g'):
+            if current_faces:
+                groups.append((current_name, current_faces))
+                current_faces = []
+            current_name = values[1] if len(values) > 1 else '__default__'
+        elif values[0] == 'f':
+            face = [int(v.split('/')[0]) for v in values[1:]]
+            current_faces.append(face)
+
+    if current_faces:
+        groups.append((current_name, current_faces))
+
+    result = {}
+    for name, faces in groups:
+        start = len(vertices_list)
+        for face in faces:
+            for vid in circular_sliding_window_of_three(face):
+                vertices_list.append(raw_verts[vid - 1])
+        count = len(vertices_list) - start
+        if count > 0:
+            result[name] = (start, count)
+
+    return result
+
+
 # ─── Procedural geometry builders ─────────────────────────────────────────────
 
 def make_sun(R_inner=1.0, R_outer=1.7, N=12):
@@ -152,7 +192,7 @@ def make_sea_circle(radius=1.0, N=64):
 
 # ─── Load all geometry (runs at import time) ──────────────────────────────────
 
-start_boat,    count_boat    = load_obj('models/barco.obj')
+boat_parts = load_obj_parts('models/barco_partes_separadas.obj')
 start_island,  count_island  = load_obj('models/island1.obj')
 start_lh,      count_lh      = load_obj('models/lighthouse.obj')
 start_volcano, count_volcano = load_obj('models/volcano_rock.obj')

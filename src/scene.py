@@ -64,14 +64,24 @@ class Scene:
 
     # ── Draw functions ────────────────────────────────────────────────────────
 
+    BOAT_PART_COLORS = {
+        'boat_bottom': (0.8, 0.1, 0.1, 1.0),   # red
+        'boat_top':    (0.1, 0.3, 0.9, 1.0),   # blue
+        'cabin':       (0.1, 0.8, 0.1, 1.0),   # green
+        'cabin_top':   (1.0, 0.9, 0.1, 1.0),   # yellow
+        'chimney':     (0.9, 0.1, 0.9, 1.0),   # magenta
+    }
+
     def draw_boat(self):
-        glUniform4f(self.loc_color, 0.55, 0.27, 0.07, 1.0)
         s = self.BOAT_SCALE
-        glUniformMatrix4fv(self.loc_model, 1, GL_TRUE,
-            model_matrix(angle=state.boat_angle, ry=1.0,
-                         tx=state.boat_x, ty=0.4, tz=state.boat_z,
-                         sx=s, sy=s, sz=s))
-        glDrawArrays(GL_TRIANGLES, geometry.start_boat, geometry.count_boat)
+        mat = model_matrix(angle=state.boat_angle, ry=1.0,
+                           tx=state.boat_x, ty=0.4, tz=state.boat_z,
+                           sx=s, sy=s, sz=s)
+        glUniformMatrix4fv(self.loc_model, 1, GL_TRUE, mat)
+        for name, (start, count) in geometry.boat_parts.items():
+            color = self.BOAT_PART_COLORS.get(name, (1.0, 1.0, 1.0, 1.0))
+            glUniform4f(self.loc_color, *color)
+            glDrawArrays(GL_TRIANGLES, start, count)
 
     def draw_island(self):
         glUniform4f(self.loc_color, 0.76, 0.70, 0.50, 1.0)
