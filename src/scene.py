@@ -3,6 +3,8 @@ import glm
 import math
 import numpy as np
 
+import glfw
+
 from . import state
 from . import geometry
 from .particles import ParticleEmitter
@@ -46,6 +48,11 @@ class Scene:
     # Chimney top in boat local space (max-Y centroid of chimney vertices)
     CHIMNEY_TOP_LOCAL = (-0.1220, 2.1067, -1.2967)
 
+    # Bow (front of boat_bottom) in boat local space
+    BOW_LOCAL           = (  0.0000, -0.6,  2.1089)   # lowered to waterline
+    BOW_SPRAY_SPEED     = 2   # sideways component, world units/s
+    BOW_BACKWARD_SPEED  = 2   # backward component, world units/s
+
     def __init__(self, program):
         self.loc_color      = glGetUniformLocation(program, "color")
         self.loc_model      = glGetUniformLocation(program, "model")
@@ -57,15 +64,46 @@ class Scene:
             color      = (0.55, 0.55, 0.55, 1.0),
             spawn_rate = 2.0,
             lifetime   = 2.0,
-            rise_speed = 1.2,
+            velocity   = (0.0, 1.2, 0.0),
             max_scale  = 0.12,
         )
+        # Bow spray: two emitters at boat front, spraying sideways — velocity
+        # updated each frame to match the boat's current heading
+        self.bow_port = ParticleEmitter(
+            base_pos   = (0.0, 0.0, 0.0),   # updated each frame in draw_boat
+            color      = (0.90, 0.96, 1.0, 1.0),
+            spawn_rate = 5.0,
+            lifetime   = 3,
+            velocity   = (0.0, 0.0, 0.0),   # updated each frame
+            max_scale  = 0.1,
+            drag       = 1.0,
+        )
+        self.bow_starboard = ParticleEmitter(
+            base_pos   = (0.0, 0.0, 0.0),   # updated each frame in draw_boat
+            color      = (0.90, 0.96, 1.0, 1.0),
+            spawn_rate = 5.0,
+            lifetime   = 3,
+            velocity   = (0.0, 0.0, 0.0),   # updated each frame
+            max_scale  = 0.1,
+            drag       = 1.0,
+        )
+        self.shark_trails = [
+            ParticleEmitter(
+                base_pos   = (0.0, 0.0, 0.0),   # updated each frame in draw_sharks
+                color      = (0.75, 0.88, 1.0, 1.0),
+                spawn_rate = 8.0,
+                lifetime   = 1.5,
+                velocity   = (0.0, 0.0, 0.0),
+                max_scale  = 0.04,
+            )
+            for _ in range(self.SHARK_COUNT)
+        ]
         self.volcano_smoke = ParticleEmitter(
             base_pos   = (self.VOLCANO_POS[0], self.VOLCANO_POS[1] + 5.6, self.VOLCANO_POS[2]),
             color      = (0.30, 0.28, 0.28, 1.0),
             spawn_rate = .3,
             lifetime   = 10.0,
-            rise_speed = 0.5,
+            velocity   = (0.0, 0.5, 0.0),
             max_scale  = 0.7,
         )
 
@@ -109,6 +147,24 @@ class Scene:
         wy =  sy + 0.4 + bob
         wz = -sx * math.sin(angle_rad) + sz * math.cos(angle_rad) + state.boat_z
         self.boat_smoke.base_pos = [wx, wy, wz]
+
+        # Update bow spray emitters — bow position + sideways velocity from heading
+        lx, ly, lz = self.BOW_LOCAL
+        sx3, sy3, sz3 = lx * s, ly * s, lz * s
+        wx3 =  sx3 * math.cos(angle_rad) + sz3 * math.sin(angle_rad) + state.boat_x
+        wy3 =  sy3 + 0.4 + bob
+        wz3 = -sx3 * math.sin(angle_rad) + sz3 * math.cos(angle_rad) + state.boat_z
+        # Spray = sideways + backward (backward = -heading = (-sin θ, 0, -cos θ))
+        ss = self.BOW_SPRAY_SPEED
+        sb = self.BOW_BACKWARD_SPEED
+        right = [ math.cos(angle_rad) * ss - math.sin(angle_rad) * sb, 0.0,
+                 -math.sin(angle_rad) * ss - math.cos(angle_rad) * sb]
+        left  = [-math.cos(angle_rad) * ss - math.sin(angle_rad) * sb, 0.0,
+                  math.sin(angle_rad) * ss - math.cos(angle_rad) * sb]
+        self.bow_port.base_pos      = [wx3, wy3, wz3]
+        self.bow_port.velocity      = left
+        self.bow_starboard.base_pos = [wx3, wy3, wz3]
+        self.bow_starboard.velocity = right
 
     def draw_island(self):
         glUniform4f(self.loc_color, 0.76, 0.70, 0.50, 1.0)
@@ -164,6 +220,7 @@ class Scene:
                              tx=x, ty=self.SHARK_CENTER[1], tz=z,
                              sx=s, sy=s, sz=s))
             glDrawArrays(GL_TRIANGLES, geometry.start_fin, geometry.count_fin)
+            self.shark_trails[i].base_pos = [x, self.SHARK_CENTER[1], z]
 
     def draw_clouds(self):
         glUniform4f(self.loc_color, 1.0, 1.0, 1.0, 1.0)
@@ -192,5 +249,15 @@ class Scene:
         self.draw_boat()
         self.boat_smoke.update(state.delta_time)
         self.boat_smoke.draw(self.loc_model, self.loc_color)
+        moving_forward = glfw.KEY_W in state.keys_pressed and not state.FREE_CAMERA
+        self.bow_port.active      = moving_forward
+        self.bow_starboard.active = moving_forward
+        self.bow_port.update(state.delta_time)
+        self.bow_port.draw(self.loc_model, self.loc_color)
+        self.bow_starboard.update(state.delta_time)
+        self.bow_starboard.draw(self.loc_model, self.loc_color)
+        for trail in self.shark_trails:
+            trail.update(state.delta_time)
+            trail.draw(self.loc_model, self.loc_color)
         self.volcano_smoke.update(state.delta_time)
         self.volcano_smoke.draw(self.loc_model, self.loc_color)
