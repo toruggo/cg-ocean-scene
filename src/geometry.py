@@ -1,8 +1,20 @@
 import math
 import numpy as np
+import glm
 
 # Single flat list — all objects share one VBO uploaded in projeto1.py
 vertices_list = []
+
+
+def model_matrix(angle=0.0, rx=0.0, ry=1.0, rz=0.0,
+                 tx=0.0, ty=0.0, tz=0.0,
+                 sx=1.0, sy=1.0, sz=1.0):
+    m = glm.mat4(1.0)
+    m = glm.translate(m, glm.vec3(tx, ty, tz))
+    if angle != 0.0:
+        m = glm.rotate(m, math.radians(angle), glm.vec3(rx, ry, rz))
+    m = glm.scale(m, glm.vec3(sx, sy, sz))
+    return np.array(m)
 
 
 # ─── OBJ loader ───────────────────────────────────────────────────────────────
@@ -174,6 +186,26 @@ def make_cloud(seed, a=2.5, b=1.4, n_circles=12, r_min=0.3, r_max=0.8, N=16, y=0
     return start, len(vertices_list) - start
 
 
+def make_sphere(radius=1.0, stacks=8, slices=8):
+    """UV sphere centered at origin."""
+    start = len(vertices_list)
+    for i in range(stacks):
+        phi0 = math.pi * i       / stacks - math.pi / 2
+        phi1 = math.pi * (i + 1) / stacks - math.pi / 2
+        for j in range(slices):
+            th0 = 2 * math.pi * j       / slices
+            th1 = 2 * math.pi * (j + 1) / slices
+            p = [
+                [radius * math.cos(phi0) * math.cos(th0), radius * math.sin(phi0), radius * math.cos(phi0) * math.sin(th0)],
+                [radius * math.cos(phi0) * math.cos(th1), radius * math.sin(phi0), radius * math.cos(phi0) * math.sin(th1)],
+                [radius * math.cos(phi1) * math.cos(th0), radius * math.sin(phi1), radius * math.cos(phi1) * math.sin(th0)],
+                [radius * math.cos(phi1) * math.cos(th1), radius * math.sin(phi1), radius * math.cos(phi1) * math.sin(th1)],
+            ]
+            vertices_list.append(p[0]); vertices_list.append(p[1]); vertices_list.append(p[2])
+            vertices_list.append(p[1]); vertices_list.append(p[3]); vertices_list.append(p[2])
+    return start, len(vertices_list) - start
+
+
 def make_sea_circle(radius=1.0, N=64):
     """
     Filled circle on the XZ plane (triangle fan).
@@ -199,6 +231,7 @@ start_volcano, count_volcano = load_obj('models/volcano_rock.obj')
 start_sun,     count_sun     = make_sun(R_inner=.8, R_outer=1.5, N=12)
 start_fin,     count_fin     = make_shark_fin()
 start_sea,     count_sea     = make_sea_circle(radius=1.0, N=64)
+start_particle, count_particle = make_sphere(radius=1.0, stacks=8, slices=8)
 
 # Each entry: (seed, world_x, world_y, world_z, ellipse_a, ellipse_b, n_circles)
 CLOUD_DEFS = [

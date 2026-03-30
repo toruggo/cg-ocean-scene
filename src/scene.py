@@ -5,17 +5,10 @@ import numpy as np
 
 from . import state
 from . import geometry
+from .particles import ParticleEmitter
 
 
-def model_matrix(angle=0.0, rx=0.0, ry=1.0, rz=0.0,
-                 tx=0.0, ty=0.0, tz=0.0,
-                 sx=1.0, sy=1.0, sz=1.0):
-    m = glm.mat4(1.0)
-    m = glm.translate(m, glm.vec3(tx, ty, tz))
-    if angle != 0.0:
-        m = glm.rotate(m, math.radians(angle), glm.vec3(rx, ry, rz))
-    m = glm.scale(m, glm.vec3(sx, sy, sz))
-    return np.array(m)
+model_matrix = geometry.model_matrix
 
 
 class Scene:
@@ -50,11 +43,31 @@ class Scene:
     CLOUD_ROT_ANGLE = 90.0
     CLOUD_ROT_AXIS  = (6.0, -2.0, 1.0)
 
+    # Chimney top in boat local space (max-Y centroid of chimney vertices)
+    CHIMNEY_TOP_LOCAL = (-0.1220, 2.1067, -1.2967)
+
     def __init__(self, program):
         self.loc_color      = glGetUniformLocation(program, "color")
         self.loc_model      = glGetUniformLocation(program, "model")
         self.loc_view       = glGetUniformLocation(program, "view")
         self.loc_projection = glGetUniformLocation(program, "projection")
+
+        self.boat_smoke = ParticleEmitter(
+            base_pos   = (0.0, 0.0, 0.0),   # updated each frame in draw_boat
+            color      = (0.55, 0.55, 0.55, 1.0),
+            spawn_rate = 2.0,
+            lifetime   = 2.0,
+            rise_speed = 1.2,
+            max_scale  = 0.12,
+        )
+        self.volcano_smoke = ParticleEmitter(
+            base_pos   = (self.VOLCANO_POS[0], self.VOLCANO_POS[1] + 5.6, self.VOLCANO_POS[2]),
+            color      = (0.30, 0.28, 0.28, 1.0),
+            spawn_rate = 1.0,
+            lifetime   = 4.0,
+            rise_speed = 0.5,
+            max_scale  = 0.1,
+        )
 
     # ── View / projection ─────────────────────────────────────────────────────
 
@@ -63,6 +76,9 @@ class Scene:
         glUniformMatrix4fv(self.loc_projection, 1, GL_TRUE, mat_proj)
 
     # ── Draw functions ────────────────────────────────────────────────────────
+
+    BOAT_BOB_AMPLITUDE = 0.10   # world units
+    BOAT_BOB_SPEED     = 1.5   # radians per second (primary wave)
 
     BOAT_PART_COLORS = {
         'boat_bottom': (0.8, 0.1, 0.1, 1.0),   # red
@@ -74,14 +90,25 @@ class Scene:
 
     def draw_boat(self):
         s = self.BOAT_SCALE
+        t = self.BOAT_BOB_SPEED * state.last_frame
+        bob = self.BOAT_BOB_AMPLITUDE * (0.6 * math.sin(t) + 0.4 * math.sin(2.3 * t + 0.8))
         mat = model_matrix(angle=state.boat_angle, ry=1.0,
-                           tx=state.boat_x, ty=0.4, tz=state.boat_z,
+                           tx=state.boat_x, ty=0.4 + bob, tz=state.boat_z,
                            sx=s, sy=s, sz=s)
         glUniformMatrix4fv(self.loc_model, 1, GL_TRUE, mat)
         for name, (start, count) in geometry.boat_parts.items():
             color = self.BOAT_PART_COLORS.get(name, (1.0, 1.0, 1.0, 1.0))
             glUniform4f(self.loc_color, *color)
             glDrawArrays(GL_TRIANGLES, start, count)
+
+        # Update boat smoke emitter to chimney top in world space
+        lx, ly, lz = self.CHIMNEY_TOP_LOCAL
+        angle_rad = math.radians(state.boat_angle)
+        sx, sy, sz = lx * s, ly * s, lz * s
+        wx =  sx * math.cos(angle_rad) + sz * math.sin(angle_rad) + state.boat_x
+        wy =  sy + 0.4 + bob
+        wz = -sx * math.sin(angle_rad) + sz * math.cos(angle_rad) + state.boat_z
+        self.boat_smoke.base_pos = [wx, wy, wz]
 
     def draw_island(self):
         glUniform4f(self.loc_color, 0.76, 0.70, 0.50, 1.0)
@@ -163,3 +190,7 @@ class Scene:
         self.draw_lighthouse()
         self.draw_volcano()
         self.draw_boat()
+        self.boat_smoke.update(state.delta_time)
+        self.boat_smoke.draw(self.loc_model, self.loc_color)
+        self.volcano_smoke.update(state.delta_time)
+        self.volcano_smoke.draw(self.loc_model, self.loc_color)
