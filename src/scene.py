@@ -119,11 +119,11 @@ class Scene:
     BOAT_BOB_SPEED     = 1.5   # radians per second (primary wave)
 
     BOAT_PART_COLORS = {
-        'boat_bottom': (0.8, 0.1, 0.1, 1.0),   # red
-        'boat_top':    (0.1, 0.3, 0.9, 1.0),   # blue
-        'cabin':       (0.1, 0.8, 0.1, 1.0),   # green
-        'cabin_top':   (1.0, 0.9, 0.1, 1.0),   # yellow
-        'chimney':     (0.9, 0.1, 0.9, 1.0),   # magenta
+        'boat_bottom': (1.000, 0.608, 0.000, 1.0),   # #FF9B00
+        'boat_top':    (0.922, 0.890, 0.537, 1.0),   # #EBE389
+        'cabin':       (1.000, 0.788, 0.000, 1.0),   # #FFC900
+        'cabin_top':   (1.000, 0.882, 0.000, 1.0),   # #FFE100
+        'chimney':     (1.000, 0.608, 0.000, 1.0),   # #FF9B00
     }
 
     def draw_boat(self):
@@ -175,10 +175,10 @@ class Scene:
         glDrawArrays(GL_TRIANGLES, geometry.start_island, geometry.count_island)
 
     LH_PART_COLORS = {
-        'lighthouse_body':      (0.8, 0.1, 0.1, 1.0),   # red
-        'Cylinder.001':         (0.1, 0.3, 0.9, 1.0),   # blue
-        'lighthouse_top_floor': (0.1, 0.8, 0.1, 1.0),   # green
-        'lighthouse_light':     (1.0, 0.9, 0.1, 1.0),   # yellow
+        'lighthouse_body':      (0.980, 0.361, 0.361, 1.0),   # rgb(250,  92,  92)
+        'Cylinder.001':         (0.992, 0.541, 0.420, 1.0),   # rgb(253, 138, 107)
+        'lighthouse_top_floor': (0.996, 0.761, 0.533, 1.0),   # rgb(254, 194, 136)
+        'lighthouse_light':     (0.984, 0.937, 0.463, 1.0),   # #FBEF76
     }
 
     def draw_lighthouse(self):

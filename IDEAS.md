@@ -46,3 +46,10 @@ stripes, boat hull vs. sail vs. mast).
   keys (planned in assignment)
 - **Volcano smoke**: particle system using small procedural quads emitted
   upward from volcano tip
+
+## Colour Palettes
+
+ #FFF7CD, #FDC3A1, #FB9B8F and #F57799
+#FA5C5C #FD8A6B #FEC288 #FBEF76
+#A5C89E #FFFBB1 #D8E983 #AEB877
+#FF9B00 #FFE100 #FFC900 #EBE389
