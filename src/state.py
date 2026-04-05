@@ -16,9 +16,10 @@ wireframe = False
 
 # ─── Boat ─────────────────────────────────────────────────────────────────────
 
-boat_x     = 0.0
-boat_z     = 0.0
-boat_angle = 0.0   # degrees, Y-axis rotation
+boat_x              = 0.0
+boat_z              = 0.0
+boat_angle          = 0.0    # degrees, Y-axis rotation
+boat_moving_forward = False  # set by process_boat; read by bow spray emitters
 
 BOAT_SPEED = 2.0   # world units per second
 BOAT_ROT   = 45.0  # degrees per second

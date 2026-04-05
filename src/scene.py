@@ -3,8 +3,6 @@ import glm
 import math
 import numpy as np
 
-import glfw
-
 from . import state
 from . import geometry
 from .particles import ParticleEmitter
@@ -26,17 +24,13 @@ class Scene:
 
     ISLAND_POS     = (-7.0,  1.5 * 0.559, -6.0)   # ty keeps base at y=0
     LIGHTHOUSE_POS = (-7.0,  1.5 * 1.416, -6.0)   # on scaled island top
-    # Coqueiros – escala em tempo real via state.coqueiro_scale (A/Z).
-    COQUEIRO_POS    = (-9.300,  1.9984, -6.039)
-    COQUEIRO_ANGLE  = 2.3
-
-    COQUEIRO2_POS   = (-6.989,  0.7717, -3.975)
-    COQUEIRO2_ANGLE = 27.0
-    COQUEIRO2_TILT  = 30.0
-
-    COQUEIRO3_POS   = (-10.566, 0.8390, -5.779)
-    COQUEIRO3_ANGLE = -75.8
-    COQUEIRO3_TILT  = 30.0
+    # Coqueiros – escala em tempo real via state.coqueiro_scale (Z/X).
+    # Each entry: (pos, y_angle, x_tilt)
+    COQUEIROS = [
+        ((-9.300,  1.9984, -6.039),   2.3,    0.0),
+        ((-6.989,  0.7717, -3.975),  27.0,   30.0),
+        ((-10.566, 0.8390, -5.779), -75.8,   30.0),
+    ]
 
     VOLCANO_POS    = ( 7.0,  1.363,        5.0)
 
@@ -232,19 +226,7 @@ class Scene:
 
     def draw_coqueiro(self):
         s = state.coqueiro_scale
-
-        # Coqueiro 1: topo da ilha
-        self._draw_coqueiro_parts(model_matrix(
-            angle=self.COQUEIRO_ANGLE, ry=1.0,
-            tx=self.COQUEIRO_POS[0], ty=self.COQUEIRO_POS[1], tz=self.COQUEIRO_POS[2],
-            sx=s, sy=s, sz=s,
-        ))
-
-        # Coqueiro 2 e 3: margem, inclinados para fora da ilha
-        for pos, angle, tilt in (
-            (self.COQUEIRO2_POS, self.COQUEIRO2_ANGLE, self.COQUEIRO2_TILT),
-            (self.COQUEIRO3_POS, self.COQUEIRO3_ANGLE, self.COQUEIRO3_TILT),
-        ):
+        for pos, angle, tilt in self.COQUEIROS:
             tx, ty, tz = pos
             m = glm.mat4(1.0)
             m = glm.translate(m, glm.vec3(tx, ty, tz))
@@ -348,9 +330,8 @@ class Scene:
         self.draw_boat()
         self.boat_smoke.update(state.delta_time)
         self.boat_smoke.draw(self.loc_model, self.loc_color)
-        moving_forward = glfw.KEY_W in state.keys_pressed
-        self.bow_port.active      = moving_forward
-        self.bow_starboard.active = moving_forward
+        self.bow_port.active      = state.boat_moving_forward
+        self.bow_starboard.active = state.boat_moving_forward
         self.bow_port.update(state.delta_time)
         self.bow_port.draw(self.loc_model, self.loc_color)
         self.bow_starboard.update(state.delta_time)
