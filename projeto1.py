@@ -1,7 +1,6 @@
 import glfw
 from OpenGL.GL import *
 import numpy as np
-import glm
 import ctypes
 from src.shader_s import Shader
 
@@ -58,19 +57,12 @@ glfw.set_key_callback(window, inp.key_event)
 glfw.set_cursor_pos_callback(window, inp.mouse_callback)
 glfw.set_scroll_callback(window, inp.scroll_callback)
 
-if state.FREE_CAMERA:
-    glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_DISABLED)
-
-
 # ─── Render loop ──────────────────────────────────────────────────────────────
 
 glfw.show_window(window)
 glEnable(GL_DEPTH_TEST)
 
-if state.FREE_CAMERA:
-    print("\nFree camera ON  –  W/S fwd-back · Q/E strafe · Mouse look · Scroll zoom · A/Z coqueiro scale · C snapshot · P wireframe · ESC quit\n")
-else:
-    print("\nStatic camera  –  ←/→ rotate boat · W/S move · A/Z coqueiro scale · P wireframe · ESC quit\n")
+print("\nW/S move · A/D rotate boat · A/Z coqueiro scale · P wireframe · ESC quit\n")
 
 while not glfw.window_should_close(window):
     now = glfw.get_time()
@@ -80,8 +72,9 @@ while not glfw.window_should_close(window):
     glfw.poll_events()
     inp.process_coqueiro_scale()
     inp.process_boat()
-    state.shark_angle += scene.SHARK_SPEED  * state.delta_time
-    state.sun_spin    += state.SUN_SPIN_SPEED * state.delta_time
+    state.shark_angle        += scene.SHARK_SPEED        * state.delta_time
+    state.horizon_boat_angle += scene.HORIZON_BOAT_SPEED * state.delta_time
+    state.sun_spin           += state.SUN_SPIN_SPEED     * state.delta_time
 
     glClearColor(0.53, 0.81, 0.98, 1.0)
     # glClearColor(0.3, 0.55, 0.9, 1.0)
@@ -89,14 +82,7 @@ while not glfw.window_should_close(window):
 
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE if state.wireframe else GL_FILL)
 
-    if state.FREE_CAMERA:
-        mat_view = np.array(glm.lookAt(state.cam_pos, state.cam_pos + state.cam_front, state.cam_up))
-        mat_proj = np.array(glm.perspective(glm.radians(state.fov), state.WIDTH / state.HEIGHT, 0.1, 200.0))
-    else:
-        mat_view = state.mat_view_static
-        mat_proj = state.mat_proj_static
-
-    scene.set_view_projection(mat_view, mat_proj)
+    scene.set_view_projection(state.mat_view_static, state.mat_proj_static)
     scene.draw_all()
 
     glfw.swap_buffers(window)

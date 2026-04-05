@@ -153,28 +153,39 @@ def make_shark_fin():
     return start, len(vertices_list) - start
 
 
-def make_cloud(seed, a=2.5, b=1.4, n_circles=12, r_min=0.3, r_max=0.8, N=16, y=0.05):
+def make_cloud(seed, a=2.5, b=1.4, n_circles=12, r_min=0.3, r_max=0.8, N=24, y=0.05):
     """
-    Cloud: overlapping circles distributed inside an ellipse (a × b).
-    Centers sampled with a fixed seed → reproducible shape.
-    Circle radius lerps from r_max at center to r_min at the boundary.
-    Geometry is in local space; position via model matrix.
+    Cloud: jittered hex grid of circles clipped to an ellipse (a × b).
+    Grid spacing = r_min * 1.8, which is < 2*r_min, so adjacent circles always
+    overlap — no gaps by construction. Jitter (30% of r_min) breaks hex
+    regularity for an organic silhouette.
+    n_circles is kept for API compatibility but unused; density comes from r_min.
     """
     rng   = np.random.default_rng(seed)
     start = len(vertices_list)
     step  = 2 * math.pi / N
 
-    centers  = []
-    attempts = 0
-    while len(centers) < n_circles and attempts < n_circles * 20:
-        x = rng.uniform(-a, a)
-        z = rng.uniform(-b, b)
-        if (x / a) ** 2 + (z / b) ** 2 <= 1.0:
-            centers.append((x, z))
-        attempts += 1
+    col_step = r_min * 1.8                       # < 2*r_min → guaranteed overlap
+    row_step = col_step * math.sqrt(3) / 2       # hex row height
+    jitter   = r_min * 0.3
+
+    centers = []
+    row = 0
+    z = -b
+    while z <= b + row_step:
+        x_offset = (col_step / 2) * (row % 2)   # alternate rows offset for hex
+        x = -a
+        while x <= a + col_step:
+            jx = x + x_offset + rng.uniform(-jitter, jitter)
+            jz = z +             rng.uniform(-jitter, jitter)
+            if (jx / a) ** 2 + (jz / b) ** 2 <= 1.1:   # slight expansion covers edges
+                centers.append((jx, jz))
+            x += col_step
+        z += row_step
+        row += 1
 
     for (cx, cz) in centers:
-        dist = math.sqrt((cx / a) ** 2 + (cz / b) ** 2)
+        dist = min(math.sqrt((cx / a) ** 2 + (cz / b) ** 2), 1.0)
         r    = r_max + (r_min - r_max) * dist
         for i in range(N):
             a1 = i * step
@@ -234,7 +245,7 @@ start_fin,     count_fin     = make_shark_fin()
 start_sea,     count_sea     = make_sea_circle(radius=1.0, N=64)
 start_particle, count_particle = make_sphere(radius=1.0, stacks=8, slices=8)
 
-# Each entry: (seed, world_x, world_y, world_z, ellipse_a, ellipse_b, n_circles)
+# Each entry: (seed, world_x, world_y, world_z, ellipse_a, ellipse_b, n_circles[unused])
 CLOUD_DEFS = [
     (11, 10.0, 12, -20.0, 3, 1.5, 100),
 ]

@@ -26,16 +26,30 @@ class Scene:
 
     ISLAND_POS     = (-7.0,  1.5 * 0.559, -6.0)   # ty keeps base at y=0
     LIGHTHOUSE_POS = (-7.0,  1.5 * 1.416, -6.0)   # on scaled island top
-    # Coqueiro: base do modelo em y=0 → assenta no topo da ilha (mesmo y que o farol).
-    # Escala em tempo real: state.coqueiro_scale (A/Z, limites em state.py).
-    COQUEIRO_ANGLE  = 40.0   # graus, eixo Y (rotação no plano da ilha)
-    COQUEIRO_POS    = (-5.35, 1.5 * 1.416, -5.55)
+    # Coqueiros – escala em tempo real via state.coqueiro_scale (A/Z).
+    COQUEIRO_POS    = (-9.300,  1.9984, -6.039)
+    COQUEIRO_ANGLE  = 2.3
+
+    COQUEIRO2_POS   = (-6.989,  0.7717, -3.975)
+    COQUEIRO2_ANGLE = 27.0
+    COQUEIRO2_TILT  = 30.0
+
+    COQUEIRO3_POS   = (-10.566, 0.8390, -5.779)
+    COQUEIRO3_ANGLE = -75.8
+    COQUEIRO3_TILT  = 30.0
+
     VOLCANO_POS    = ( 7.0,  1.363,        5.0)
 
     SHARK_COUNT     = 3
     SHARK_CENTER    = (0.0, 0.0, 0.0)
     SHARK_RADIUS    = 3.0
     SHARK_SPEED     = 25.0   # degrees per second
+
+    HORIZON_BOAT_COUNT  = 3
+    HORIZON_BOAT_RADIUS = 40.0
+    HORIZON_BOAT_CENTER = (0.0, 0.0, 0.0)
+    HORIZON_BOAT_SPEED  = 2.0   # degrees per second
+    HORIZON_BOAT_SCALE  = 0.6 * 0.8
     SHARK_FIN_SCALE = 0.6
 
     SEA_SX = 40.0
@@ -102,6 +116,17 @@ class Scene:
             )
             for _ in range(self.SHARK_COUNT)
         ]
+        self.horizon_boat_smokes = [
+            ParticleEmitter(
+                base_pos   = (0.0, 0.0, 0.0),   # updated each frame in draw_horizon_boats
+                color      = (0.60, 0.60, 0.65, 1.0),
+                spawn_rate = 1.5,
+                lifetime   = 6.0,
+                velocity   = (0.0, 1.0, 0.0),
+                max_scale  = 0.10,
+            )
+            for _ in range(self.HORIZON_BOAT_COUNT)
+        ]
         self.volcano_smoke = ParticleEmitter(
             base_pos   = (self.VOLCANO_POS[0], self.VOLCANO_POS[1] + 5.6, self.VOLCANO_POS[2]),
             color      = (0.30, 0.28, 0.28, 1.0),
@@ -128,6 +153,14 @@ class Scene:
         'cabin':       (1.000, 0.788, 0.000, 1.0),   # #FFC900
         'cabin_top':   (1.000, 0.882, 0.000, 1.0),   # #FFE100
         'chimney':     (1.000, 0.608, 0.000, 1.0),   # #FF9B00
+    }
+
+    HORIZON_BOAT_PART_COLORS = {
+        'boat_bottom': (0.22, 0.22, 0.22, 1.0),
+        'boat_top':    (0.30, 0.30, 0.30, 1.0),
+        'cabin':       (0.28, 0.28, 0.28, 1.0),
+        'cabin_top':   (0.25, 0.25, 0.25, 1.0),
+        'chimney':     (0.18, 0.18, 0.18, 1.0),
     }
 
     def draw_boat(self):
@@ -190,20 +223,35 @@ class Scene:
         'folhas': (0.18, 0.62, 0.28, 1.0),
     }
 
-    def draw_coqueiro(self):
-        s = state.coqueiro_scale
-        glUniformMatrix4fv(
-            self.loc_model, 1, GL_TRUE,
-            model_matrix(
-                angle=self.COQUEIRO_ANGLE, ry=1.0,
-                tx=self.COQUEIRO_POS[0], ty=self.COQUEIRO_POS[1], tz=self.COQUEIRO_POS[2],
-                sx=s, sy=s, sz=s,
-            ),
-        )
+    def _draw_coqueiro_parts(self, mat):
+        glUniformMatrix4fv(self.loc_model, 1, GL_TRUE, mat)
         for name, (start, count) in geometry.coqueiro_parts.items():
             color = self.COQUEIRO_PART_COLORS.get(name, (1.0, 1.0, 1.0, 1.0))
             glUniform4f(self.loc_color, *color)
             glDrawArrays(GL_TRIANGLES, start, count)
+
+    def draw_coqueiro(self):
+        s = state.coqueiro_scale
+
+        # Coqueiro 1: topo da ilha
+        self._draw_coqueiro_parts(model_matrix(
+            angle=self.COQUEIRO_ANGLE, ry=1.0,
+            tx=self.COQUEIRO_POS[0], ty=self.COQUEIRO_POS[1], tz=self.COQUEIRO_POS[2],
+            sx=s, sy=s, sz=s,
+        ))
+
+        # Coqueiro 2 e 3: margem, inclinados para fora da ilha
+        for pos, angle, tilt in (
+            (self.COQUEIRO2_POS, self.COQUEIRO2_ANGLE, self.COQUEIRO2_TILT),
+            (self.COQUEIRO3_POS, self.COQUEIRO3_ANGLE, self.COQUEIRO3_TILT),
+        ):
+            tx, ty, tz = pos
+            m = glm.mat4(1.0)
+            m = glm.translate(m, glm.vec3(tx, ty, tz))
+            m = glm.rotate(m, math.radians(angle), glm.vec3(0, 1, 0))
+            m = glm.rotate(m, math.radians(tilt),  glm.vec3(1, 0, 0))
+            m = glm.scale(m, glm.vec3(s, s, s))
+            self._draw_coqueiro_parts(np.array(m))
 
     def draw_lighthouse(self):
         s = self.LIGHTHOUSE_SCALE
@@ -246,6 +294,31 @@ class Scene:
             glDrawArrays(GL_TRIANGLES, geometry.start_fin, geometry.count_fin)
             self.shark_trails[i].base_pos = [x, self.SHARK_CENTER[1], z]
 
+    def draw_horizon_boats(self):
+        s = self.HORIZON_BOAT_SCALE
+        cx, _, cz = self.HORIZON_BOAT_CENTER
+        lx, ly, lz = self.CHIMNEY_TOP_LOCAL
+        for i in range(self.HORIZON_BOAT_COUNT):
+            orbit_deg = state.horizon_boat_angle + i * (360.0 / self.HORIZON_BOAT_COUNT)
+            orbit_rad = math.radians(orbit_deg)
+            x = cx + self.HORIZON_BOAT_RADIUS * math.sin(orbit_rad)
+            z = cz + self.HORIZON_BOAT_RADIUS * math.cos(orbit_rad)
+            facing = 90.0 + orbit_deg   # tangent of CCW orbit
+            mat = model_matrix(angle=facing, ry=1.0, tx=x, ty=0.4, tz=z, sx=s, sy=s, sz=s)
+            glUniformMatrix4fv(self.loc_model, 1, GL_TRUE, mat)
+            for name, (start, count) in geometry.boat_parts.items():
+                color = self.HORIZON_BOAT_PART_COLORS.get(name, (1.0, 1.0, 1.0, 1.0))
+                glUniform4f(self.loc_color, *color)
+                glDrawArrays(GL_TRIANGLES, start, count)
+
+            # Update chimney smoke emitter to world position
+            facing_rad = math.radians(facing)
+            sx, sy, sz = lx * s, ly * s, lz * s
+            wx =  sx * math.cos(facing_rad) + sz * math.sin(facing_rad) + x
+            wy =  sy + 0.4
+            wz = -sx * math.sin(facing_rad) + sz * math.cos(facing_rad) + z
+            self.horizon_boat_smokes[i].base_pos = [wx, wy, wz]
+
     def draw_clouds(self):
         glUniform4f(self.loc_color, 1.0, 1.0, 1.0, 1.0)
         for i, (start, count) in enumerate(geometry.clouds):
@@ -266,6 +339,7 @@ class Scene:
         self.draw_sea()
         self.draw_clouds()
         self.draw_sharks()
+        self.draw_horizon_boats()
         self.draw_sun()
         self.draw_island()
         self.draw_coqueiro()
@@ -274,7 +348,7 @@ class Scene:
         self.draw_boat()
         self.boat_smoke.update(state.delta_time)
         self.boat_smoke.draw(self.loc_model, self.loc_color)
-        moving_forward = glfw.KEY_W in state.keys_pressed and not state.FREE_CAMERA
+        moving_forward = glfw.KEY_W in state.keys_pressed
         self.bow_port.active      = moving_forward
         self.bow_starboard.active = moving_forward
         self.bow_port.update(state.delta_time)
@@ -284,5 +358,8 @@ class Scene:
         for trail in self.shark_trails:
             trail.update(state.delta_time)
             trail.draw(self.loc_model, self.loc_color)
+        for smoke in self.horizon_boat_smokes:
+            smoke.update(state.delta_time)
+            smoke.draw(self.loc_model, self.loc_color)
         self.volcano_smoke.update(state.delta_time)
         self.volcano_smoke.draw(self.loc_model, self.loc_color)
