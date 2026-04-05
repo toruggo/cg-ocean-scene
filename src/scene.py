@@ -26,6 +26,10 @@ class Scene:
 
     ISLAND_POS     = (-7.0,  1.5 * 0.559, -6.0)   # ty keeps base at y=0
     LIGHTHOUSE_POS = (-7.0,  1.5 * 1.416, -6.0)   # on scaled island top
+    # Coqueiro: base do modelo em y=0 → assenta no topo da ilha (mesmo y que o farol).
+    # Escala em tempo real: state.coqueiro_scale (A/Z, limites em state.py).
+    COQUEIRO_ANGLE  = 40.0   # graus, eixo Y (rotação no plano da ilha)
+    COQUEIRO_POS    = (-5.35, 1.5 * 1.416, -5.55)
     VOLCANO_POS    = ( 7.0,  1.363,        5.0)
 
     SHARK_COUNT     = 3
@@ -181,6 +185,26 @@ class Scene:
         'lighthouse_light':     (0.984, 0.937, 0.463, 1.0),   # #FBEF76
     }
 
+    COQUEIRO_PART_COLORS = {
+        'tronco': (0.42, 0.30, 0.20, 1.0),
+        'folhas': (0.18, 0.62, 0.28, 1.0),
+    }
+
+    def draw_coqueiro(self):
+        s = state.coqueiro_scale
+        glUniformMatrix4fv(
+            self.loc_model, 1, GL_TRUE,
+            model_matrix(
+                angle=self.COQUEIRO_ANGLE, ry=1.0,
+                tx=self.COQUEIRO_POS[0], ty=self.COQUEIRO_POS[1], tz=self.COQUEIRO_POS[2],
+                sx=s, sy=s, sz=s,
+            ),
+        )
+        for name, (start, count) in geometry.coqueiro_parts.items():
+            color = self.COQUEIRO_PART_COLORS.get(name, (1.0, 1.0, 1.0, 1.0))
+            glUniform4f(self.loc_color, *color)
+            glDrawArrays(GL_TRIANGLES, start, count)
+
     def draw_lighthouse(self):
         s = self.LIGHTHOUSE_SCALE
         mat = model_matrix(tx=self.LIGHTHOUSE_POS[0], ty=self.LIGHTHOUSE_POS[1], tz=self.LIGHTHOUSE_POS[2],
@@ -244,6 +268,7 @@ class Scene:
         self.draw_sharks()
         self.draw_sun()
         self.draw_island()
+        self.draw_coqueiro()
         self.draw_lighthouse()
         self.draw_volcano()
         self.draw_boat()

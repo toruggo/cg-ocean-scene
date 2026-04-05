@@ -36,6 +36,13 @@ shark_angle = 0.0  # degrees, advances every frame
 sun_spin      = 0.0   # degrees, advances every frame
 SUN_SPIN_SPEED = 5.0  # degrees per second
 
+# ─── Coqueiro (escala em tempo real: A maior, Z menor) ───────────────────────
+
+coqueiro_scale = 0.07
+COQUEIRO_SCALE_MIN = 0.03
+COQUEIRO_SCALE_MAX = 0.50
+COQUEIRO_SCALE_SPEED = 0.18   # unidades de escala por segundo (mantém A/Z)
+
 # ─── Input ────────────────────────────────────────────────────────────────────
 
 keys_pressed = set()   # set of currently held glfw key codes

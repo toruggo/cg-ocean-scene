@@ -68,9 +68,9 @@ glfw.show_window(window)
 glEnable(GL_DEPTH_TEST)
 
 if state.FREE_CAMERA:
-    print("\nFree camera ON  –  WASD move · Mouse look · Scroll zoom · C snapshot · P wireframe · ESC quit\n")
+    print("\nFree camera ON  –  W/S fwd-back · Q/E strafe · Mouse look · Scroll zoom · A/Z coqueiro scale · C snapshot · P wireframe · ESC quit\n")
 else:
-    print("\nStatic camera  –  P wireframe · ESC quit  (set FREE_CAMERA=True in state.py to re-enable fly mode)\n")
+    print("\nStatic camera  –  ←/→ rotate boat · W/S move · A/Z coqueiro scale · P wireframe · ESC quit\n")
 
 while not glfw.window_should_close(window):
     now = glfw.get_time()
@@ -78,6 +78,7 @@ while not glfw.window_should_close(window):
     state.last_frame = now
 
     glfw.poll_events()
+    inp.process_coqueiro_scale()
     inp.process_boat()
     state.shark_angle += scene.SHARK_SPEED  * state.delta_time
     state.sun_spin    += state.SUN_SPIN_SPEED * state.delta_time
