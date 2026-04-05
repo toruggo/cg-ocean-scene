@@ -36,9 +36,10 @@ def key_event(window, key, scancode, action, mods):
         state.cam_pos += speed * state.cam_front
     if key == glfw.KEY_S and action in (glfw.PRESS, glfw.REPEAT):
         state.cam_pos -= speed * state.cam_front
-    if key == glfw.KEY_A and action in (glfw.PRESS, glfw.REPEAT):
+    # Q/E: strafe (A/Z ficam para escalar o coqueiro)
+    if key == glfw.KEY_Q and action in (glfw.PRESS, glfw.REPEAT):
         state.cam_pos -= glm.normalize(glm.cross(state.cam_front, state.cam_up)) * speed
-    if key == glfw.KEY_D and action in (glfw.PRESS, glfw.REPEAT):
+    if key == glfw.KEY_E and action in (glfw.PRESS, glfw.REPEAT):
         state.cam_pos += glm.normalize(glm.cross(state.cam_front, state.cam_up)) * speed
 
 
@@ -73,14 +74,25 @@ def scroll_callback(window, xoffset, yoffset):
     state.fov = max(10.0, min(90.0, state.fov - yoffset))
 
 
+def process_coqueiro_scale():
+    """A aumenta escala, Z diminui (limites em state)."""
+    if state.delta_time <= 0.0:
+        return
+    sp = state.COQUEIRO_SCALE_SPEED * state.delta_time
+    if glfw.KEY_A in state.keys_pressed:
+        state.coqueiro_scale = min(state.COQUEIRO_SCALE_MAX, state.coqueiro_scale + sp)
+    if glfw.KEY_Z in state.keys_pressed:
+        state.coqueiro_scale = max(state.COQUEIRO_SCALE_MIN, state.coqueiro_scale - sp)
+
+
 def process_boat():
     """Called every frame. Reads keys_pressed and updates boat state."""
     if state.FREE_CAMERA:
-        return  # WASD is used by free camera in that mode
+        return  # WASD + Q/E is used by free camera in that mode
 
-    if glfw.KEY_A in state.keys_pressed:
+    if glfw.KEY_LEFT in state.keys_pressed:
         state.boat_angle += state.BOAT_ROT * state.delta_time   # CCW = left
-    if glfw.KEY_D in state.keys_pressed:
+    if glfw.KEY_RIGHT in state.keys_pressed:
         state.boat_angle -= state.BOAT_ROT * state.delta_time   # CW  = right
 
     if glfw.KEY_W in state.keys_pressed or glfw.KEY_S in state.keys_pressed:
