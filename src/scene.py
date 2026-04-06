@@ -157,6 +157,18 @@ class Scene:
         'chimney':     (0.18, 0.18, 0.18, 1.0),
     }
 
+    @staticmethod
+    def _local_to_world(local, scale, angle_deg, tx, ty, tz):
+        """Transform a local-space point by uniform scale, Y-rotation, and translation."""
+        lx, ly, lz = local
+        sx, sy, sz = lx * scale, ly * scale, lz * scale
+        a = math.radians(angle_deg)
+        return (
+             sx * math.cos(a) + sz * math.sin(a) + tx,
+             sy + ty,
+            -sx * math.sin(a) + sz * math.cos(a) + tz,
+        )
+
     def draw_boat(self):
         s = self.BOAT_SCALE
         t = self.BOAT_BOB_SPEED * state.last_frame
@@ -171,20 +183,17 @@ class Scene:
             glDrawArrays(GL_TRIANGLES, start, count)
 
         # Update boat smoke emitter to chimney top in world space
-        lx, ly, lz = self.CHIMNEY_TOP_LOCAL
-        angle_rad = math.radians(state.boat_angle)
-        sx, sy, sz = lx * s, ly * s, lz * s
-        wx =  sx * math.cos(angle_rad) + sz * math.sin(angle_rad) + state.boat_x
-        wy =  sy + 0.4 + bob
-        wz = -sx * math.sin(angle_rad) + sz * math.cos(angle_rad) + state.boat_z
-        self.boat_smoke.base_pos = [wx, wy, wz]
+        self.boat_smoke.base_pos = list(self._local_to_world(
+            self.CHIMNEY_TOP_LOCAL, s, state.boat_angle,
+            state.boat_x, 0.4 + bob, state.boat_z,
+        ))
 
         # Update bow spray emitters — bow position + sideways velocity from heading
-        lx, ly, lz = self.BOW_LOCAL
-        sx3, sy3, sz3 = lx * s, ly * s, lz * s
-        wx3 =  sx3 * math.cos(angle_rad) + sz3 * math.sin(angle_rad) + state.boat_x
-        wy3 =  sy3 + 0.4 + bob
-        wz3 = -sx3 * math.sin(angle_rad) + sz3 * math.cos(angle_rad) + state.boat_z
+        angle_rad = math.radians(state.boat_angle)
+        wx3, wy3, wz3 = self._local_to_world(
+            self.BOW_LOCAL, s, state.boat_angle,
+            state.boat_x, 0.4 + bob, state.boat_z,
+        )
         # Spray = sideways + backward (backward = -heading = (-sin θ, 0, -cos θ))
         ss = self.BOW_SPRAY_SPEED
         sb = self.BOW_BACKWARD_SPEED
@@ -279,7 +288,6 @@ class Scene:
     def draw_horizon_boats(self):
         s = self.HORIZON_BOAT_SCALE
         cx, _, cz = self.HORIZON_BOAT_CENTER
-        lx, ly, lz = self.CHIMNEY_TOP_LOCAL
         for i in range(self.HORIZON_BOAT_COUNT):
             orbit_deg = state.horizon_boat_angle + i * (360.0 / self.HORIZON_BOAT_COUNT)
             orbit_rad = math.radians(orbit_deg)
@@ -294,12 +302,9 @@ class Scene:
                 glDrawArrays(GL_TRIANGLES, start, count)
 
             # Update chimney smoke emitter to world position
-            facing_rad = math.radians(facing)
-            sx, sy, sz = lx * s, ly * s, lz * s
-            wx =  sx * math.cos(facing_rad) + sz * math.sin(facing_rad) + x
-            wy =  sy + 0.4
-            wz = -sx * math.sin(facing_rad) + sz * math.cos(facing_rad) + z
-            self.horizon_boat_smokes[i].base_pos = [wx, wy, wz]
+            self.horizon_boat_smokes[i].base_pos = list(self._local_to_world(
+                self.CHIMNEY_TOP_LOCAL, s, facing, x, 0.4, z,
+            ))
 
     def draw_clouds(self):
         glUniform4f(self.loc_color, 1.0, 1.0, 1.0, 1.0)

@@ -51,17 +51,6 @@ class Shader:
     def use(self) -> None:
         glUseProgram(self.ID)
         
-    # utility uniform functions
-    # ------------------------------------------------------------------------
-    def setBool(self, name: str, value: bool) -> None:
-        glUniform1i(glGetUniformLocation(self.ID, name), int(value))
-    # ------------------------------------------------------------------------
-    def setInt(self, name: str, value: int) -> None:
-        glUniform1i(glGetUniformLocation(self.ID, name), value)
-    # ------------------------------------------------------------------------
-    def setFloat(self, name: str, value: float) -> None:
-        glUniform1f(glGetUniformLocation(self.ID, name), value)
-
     # utility function for checking shader compilation/linking errors.
     # ------------------------------------------------------------------------
     def checkCompileErrors(self, shader: int, type: str) -> None:

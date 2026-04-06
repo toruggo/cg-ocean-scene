@@ -153,13 +153,12 @@ def make_shark_fin():
     return start, len(vertices_list) - start
 
 
-def make_cloud(seed, a=2.5, b=1.4, n_circles=12, r_min=0.3, r_max=0.8, N=24, y=0.05):
+def make_cloud(seed, a=2.5, b=1.4, r_min=0.3, r_max=0.8, N=24, y=0.05):
     """
     Cloud: jittered hex grid of circles clipped to an ellipse (a × b).
     Grid spacing = r_min * 1.8, which is < 2*r_min, so adjacent circles always
     overlap — no gaps by construction. Jitter (30% of r_min) breaks hex
     regularity for an organic silhouette.
-    n_circles is kept for API compatibility but unused; density comes from r_min.
     """
     rng   = np.random.default_rng(seed)
     start = len(vertices_list)
@@ -245,13 +244,13 @@ start_fin,     count_fin     = make_shark_fin()
 start_sea,     count_sea     = make_sea_circle(radius=1.0, N=64)
 start_particle, count_particle = make_sphere(radius=1.0, stacks=8, slices=8)
 
-# Each entry: (seed, world_x, world_y, world_z, ellipse_a, ellipse_b, n_circles[unused])
+# Each entry: (seed, world_x, world_y, world_z, ellipse_a, ellipse_b)
 CLOUD_DEFS = [
-    (11, 10.0, 12, -20.0, 3, 1.5, 100),
+    (11, 10.0, 12, -20.0, 3, 1.5),
 ]
 
 clouds = []
 for (seed, *_rest) in CLOUD_DEFS:
-    a, b, n = _rest[3], _rest[4], _rest[5]
-    s, c = make_cloud(seed=seed, a=a, b=b, n_circles=n)
+    a, b = _rest[3], _rest[4]
+    s, c = make_cloud(seed=seed, a=a, b=b)
     clouds.append((s, c))

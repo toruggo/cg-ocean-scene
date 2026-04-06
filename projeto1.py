@@ -54,8 +54,6 @@ scene = Scene(program)
 # ─── Input callbacks ──────────────────────────────────────────────────────────
 
 glfw.set_key_callback(window, inp.key_event)
-glfw.set_cursor_pos_callback(window, inp.mouse_callback)
-glfw.set_scroll_callback(window, inp.scroll_callback)
 
 # ─── Render loop ──────────────────────────────────────────────────────────────
 
@@ -77,7 +75,6 @@ while not glfw.window_should_close(window):
     state.sun_spin           += state.SUN_SPIN_SPEED     * state.delta_time
 
     glClearColor(0.53, 0.81, 0.98, 1.0)
-    # glClearColor(0.3, 0.55, 0.9, 1.0)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE if state.wireframe else GL_FILL)

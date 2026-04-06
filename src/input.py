@@ -18,14 +18,6 @@ def key_event(window, key, scancode, action, mods):
         state.keys_pressed.discard(key)
 
 
-def mouse_callback(window, xpos, ypos):
-    pass
-
-
-def scroll_callback(window, xoffset, yoffset):
-    pass
-
-
 def process_coqueiro_scale():
     """A increases scale, Z decreases (clamped by state limits)."""
     if state.delta_time <= 0.0:
