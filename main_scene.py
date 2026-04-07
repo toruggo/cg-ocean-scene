@@ -10,7 +10,7 @@ from src import input as inp
 from src.scene import Scene
 
 
-# ─── Window ───────────────────────────────────────────────────────────────────
+# Window
 
 glfw.init()
 glfw.window_hint(glfw.VISIBLE, glfw.FALSE)
@@ -23,14 +23,14 @@ if not window:
 glfw.make_context_current(window)
 
 
-# ─── Shaders ──────────────────────────────────────────────────────────────────
+# Shaders
 
 ourShader = Shader("shaders/vertex_shader.vs", "shaders/fragment_shader.fs")
 ourShader.use()
 program = ourShader.getProgram()
 
 
-# ─── Upload geometry to GPU ───────────────────────────────────────────────────
+# Upload geometry to GPU
 # geometry.py populated vertices_list at import time.
 
 vertices = np.zeros(len(geometry.vertices_list), [("position", np.float32, 3)])
@@ -46,21 +46,21 @@ glEnableVertexAttribArray(loc_position)
 glVertexAttribPointer(loc_position, 3, GL_FLOAT, False, stride, ctypes.c_void_p(0))
 
 
-# ─── Scene ────────────────────────────────────────────────────────────────────
+# Scene
 
 scene = Scene(program)
 
 
-# ─── Input callbacks ──────────────────────────────────────────────────────────
+# Input callbacks
 
 glfw.set_key_callback(window, inp.key_event)
 
-# ─── Render loop ──────────────────────────────────────────────────────────────
+# Render loop
 
 glfw.show_window(window)
 glEnable(GL_DEPTH_TEST)
 
-print("\nW/S move · A/D rotate boat · A/Z coqueiro scale · P wireframe · ESC quit\n")
+print("\nW/S move · A/D rotate boat · Z/X coqueiro scale · P wireframe · ESC quit\n")
 
 while not glfw.window_should_close(window):
     now = glfw.get_time()
@@ -70,9 +70,9 @@ while not glfw.window_should_close(window):
     glfw.poll_events()
     inp.process_coqueiro_scale()
     inp.process_boat()
-    state.shark_angle += scene.SHARK_SPEED * state.delta_time
+    state.shark_angle        += scene.SHARK_SPEED        * state.delta_time
     state.horizon_boat_angle += scene.HORIZON_BOAT_SPEED * state.delta_time
-    state.sun_spin += state.SUN_SPIN_SPEED * state.delta_time
+    state.sun_spin           += state.SUN_SPIN_SPEED     * state.delta_time
 
     glClearColor(0.53, 0.81, 0.98, 1.0)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)

@@ -13,22 +13,14 @@ model_matrix = geometry.model_matrix
 
 class Scene:
 
-    # ── Sea ───────────────────────────────────────────────────────────────────
-
     SEA_SX = 40.0
     SEA_SZ = 50.0
 
-    # ── Island ────────────────────────────────────────────────────────────────
-    #
-    #   island1.obj  Y: -0.559 → 0.857  lift by 0.559, top at 1.416
-
+    # island1.obj Y: -0.559 → 0.857; lift by 0.559, top at 1.416
     ISLAND_SCALE = 1.5
     ISLAND_POS = (-7.0, 1.5 * 0.559, -6.0)  # ty keeps base at y=0
 
-    # ── Lighthouse ────────────────────────────────────────────────────────────
-    #
-    #   lighthouse.obj  Y: 0.000 → 9.802  place on island top
-
+    # lighthouse.obj Y: 0.000 → 9.802; place on island top
     LIGHTHOUSE_SCALE = 0.3
     LIGHTHOUSE_POS = (-7.0, 1.5 * 1.416, -6.0)  # on scaled island top
 
@@ -39,11 +31,7 @@ class Scene:
         "lighthouse_light": (0.984, 0.937, 0.463, 1.0),  # #FBEF76
     }
 
-    # ── Coqueiros ─────────────────────────────────────────────────────────────
-    #
-    #   Scale driven at runtime by state.coqueiro_scale (Z/X keys).
-    #   Each entry: (pos, y_angle, x_tilt)
-
+    # Each entry: (pos, y_angle, x_tilt); scale driven at runtime by state.coqueiro_scale
     COQUEIROS = [
         ((-9.300, 1.9984, -6.039), 2.3, 0.0),
         ((-6.989, 0.7717, -3.975), 27.0, 30.0),
@@ -55,20 +43,13 @@ class Scene:
         "folhas": (0.18, 0.62, 0.28, 1.0),
     }
 
-    # ── Volcano ───────────────────────────────────────────────────────────────
-    #
-    #   volcano_rock.obj  Y: -1.363 → 5.598  lift by 1.363
-
+    # volcano_rock.obj Y: -1.363 → 5.598; lift by 1.363
     VOLCANO_POS = (7.0, 1.363, 5.0)
-
-    # ── Sun ───────────────────────────────────────────────────────────────────
 
     SUN_POS = (20.0, 12.0, -15.0)
     SUN_SCALE = 2.0
     SUN_ROT_ANGLE = 90.0
     SUN_ROT_AXIS = (1.0, 0.0, 1.0)
-
-    # ── Boat ──────────────────────────────────────────────────────────────────
 
     BOAT_SCALE = 0.6
     BOAT_BOB_AMPLITUDE = 0.10  # world units
@@ -90,8 +71,6 @@ class Scene:
     BOW_SPRAY_SPEED = 2  # sideways component, world units/s
     BOW_BACKWARD_SPEED = 2  # backward component, world units/s
 
-    # ── Horizon boats ─────────────────────────────────────────────────────────
-
     HORIZON_BOAT_COUNT = 3
     HORIZON_BOAT_RADIUS = 40.0
     HORIZON_BOAT_CENTER = (0.0, 0.0, 0.0)
@@ -105,8 +84,6 @@ class Scene:
         "cabin_top": (0.25, 0.25, 0.25, 1.0),
         "chimney": (0.18, 0.18, 0.18, 1.0),
     }
-
-    # ── Sharks ────────────────────────────────────────────────────────────────
 
     SHARK_COUNT = 3
     SHARK_CENTER = (0.0, 0.0, 0.0)
@@ -183,13 +160,13 @@ class Scene:
             max_scale=0.7,
         )
 
-    # ── View / projection ─────────────────────────────────────────────────────
+    # View / projection
 
     def set_view_projection(self, mat_view, mat_proj):
         glUniformMatrix4fv(self.loc_view, 1, GL_TRUE, mat_view)
         glUniformMatrix4fv(self.loc_projection, 1, GL_TRUE, mat_proj)
 
-    # ── Private helpers ───────────────────────────────────────────────────────
+    # Private helpers
 
     @staticmethod
     def _local_to_world(local, scale, angle_deg, tx, ty, tz):
@@ -210,7 +187,25 @@ class Scene:
             glUniform4f(self.loc_color, *color)
             glDrawArrays(GL_TRIANGLES, start, count)
 
-    # ── Draw functions ────────────────────────────────────────────────────────
+    def _update_and_draw_particles(self):
+        self.boat_smoke.update(state.delta_time)
+        self.boat_smoke.draw(self.loc_model, self.loc_color)
+        self.bow_port.active = state.boat_moving_forward
+        self.bow_starboard.active = state.boat_moving_forward
+        self.bow_port.update(state.delta_time)
+        self.bow_port.draw(self.loc_model, self.loc_color)
+        self.bow_starboard.update(state.delta_time)
+        self.bow_starboard.draw(self.loc_model, self.loc_color)
+        for trail in self.shark_trails:
+            trail.update(state.delta_time)
+            trail.draw(self.loc_model, self.loc_color)
+        for smoke in self.horizon_boat_smokes:
+            smoke.update(state.delta_time)
+            smoke.draw(self.loc_model, self.loc_color)
+        self.volcano_smoke.update(state.delta_time)
+        self.volcano_smoke.draw(self.loc_model, self.loc_color)
+
+    # Draw functions
 
     def draw_sea(self):
         glUniform4f(self.loc_color, 0.05, 0.35, 0.65, 1.0)
@@ -416,19 +411,4 @@ class Scene:
         self.draw_lighthouse()
         self.draw_volcano()
         self.draw_boat()
-        self.boat_smoke.update(state.delta_time)
-        self.boat_smoke.draw(self.loc_model, self.loc_color)
-        self.bow_port.active = state.boat_moving_forward
-        self.bow_starboard.active = state.boat_moving_forward
-        self.bow_port.update(state.delta_time)
-        self.bow_port.draw(self.loc_model, self.loc_color)
-        self.bow_starboard.update(state.delta_time)
-        self.bow_starboard.draw(self.loc_model, self.loc_color)
-        for trail in self.shark_trails:
-            trail.update(state.delta_time)
-            trail.draw(self.loc_model, self.loc_color)
-        for smoke in self.horizon_boat_smokes:
-            smoke.update(state.delta_time)
-            smoke.draw(self.loc_model, self.loc_color)
-        self.volcano_smoke.update(state.delta_time)
-        self.volcano_smoke.draw(self.loc_model, self.loc_color)
+        self._update_and_draw_particles()

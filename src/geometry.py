@@ -2,7 +2,6 @@ import math
 import numpy as np
 import glm
 
-# Single flat list — all objects share one VBO uploaded in projeto1.py
 vertices_list = []
 
 
@@ -28,7 +27,7 @@ def model_matrix(
     return np.array(m)
 
 
-# ─── OBJ loader ───────────────────────────────────────────────────────────────
+# OBJ loader
 
 
 def load_model_from_file(filename):
@@ -301,7 +300,7 @@ def make_sea_circle(radius=1.0, N=64):
     return start, len(vertices_list) - start
 
 
-# ─── Load all geometry (runs at import time) ──────────────────────────────────
+# Load all geometry (runs at import time)
 
 boat_parts = load_obj_parts("models/barco_partes_separadas.obj")
 start_island, count_island = load_obj("models/island1.obj")
