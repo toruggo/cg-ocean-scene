@@ -9,6 +9,17 @@ vertices_list = []
 def model_matrix(angle=0.0, rx=0.0, ry=1.0, rz=0.0,
                  tx=0.0, ty=0.0, tz=0.0,
                  sx=1.0, sy=1.0, sz=1.0):
+    """Build a TRS model matrix (translate -> rotate -> scale).
+
+    Args:
+        angle: rotation amount in degrees.
+        rx, ry, rz: rotation axis vector components.
+        tx, ty, tz: translation in world units.
+        sx, sy, sz: scale factors per axis.
+
+    Returns:
+        4x4 numpy array in row-major order, ready for glUniformMatrix4fv with GL_TRUE.
+    """
     m = glm.mat4(1.0)
     m = glm.translate(m, glm.vec3(tx, ty, tz))
     if angle != 0.0:
@@ -20,6 +31,17 @@ def model_matrix(angle=0.0, rx=0.0, ry=1.0, rz=0.0,
 # ─── OBJ loader ───────────────────────────────────────────────────────────────
 
 def load_model_from_file(filename):
+    """Parse a .obj file and return raw geometry data.
+
+    Args:
+        filename: path to the .obj file.
+
+    Returns:
+        Dict with keys:
+            'vertices': list of [x, y, z] strings,
+            'texture':  list of [u, v] strings,
+            'faces':    list of (vertex_indices, tex_indices, None) tuples.
+    """
     vertices = []
     texture_coords = []
     faces = []
@@ -45,6 +67,18 @@ def load_model_from_file(filename):
 
 
 def circular_sliding_window_of_three(arr):
+    """Triangulate a polygon face by fanning index triplets around its perimeter.
+
+    A triangle face is returned as-is. For faces with more vertices, produces
+    a strip of overlapping triplets by wrapping the first index at the end,
+    effectively converting an n-gon into (n-1) triangles.
+
+    Args:
+        arr: list of vertex indices forming a single polygon face.
+
+    Returns:
+        Flat list of vertex indices grouped in consecutive triangles.
+    """
     if len(arr) == 3:
         return arr
     circular_arr = arr + [arr[0]]
@@ -55,6 +89,14 @@ def circular_sliding_window_of_three(arr):
 
 
 def load_obj(filename):
+    """Load a .obj file and append its triangulated vertices to vertices_list.
+
+    Args:
+        filename: path to the .obj file.
+
+    Returns:
+        (start, count) tuple - byte offset and vertex count within vertices_list.
+    """
     modelo = load_model_from_file(filename)
     start = len(vertices_list)
     for face in modelo['faces']:
@@ -64,7 +106,18 @@ def load_obj(filename):
 
 
 def load_obj_parts(filename):
-    """Load OBJ with named objects. Returns {name: (start, count)} per part."""
+    """Load a .obj file that contains named objects, keeping each part separate.
+
+    Splits geometry by 'o' or 'g' directives so each named mesh can be
+    drawn and colored independently. Only vertex positions are loaded;
+    texture coordinates and normals are ignored.
+
+    Args:
+        filename: path to the .obj file with named object groups.
+
+    Returns:
+        Dict mapping each part name to a (start, count) tuple within vertices_list.
+    """
     raw_verts = []
     current_name = '__default__'
     groups = []       # list of (name, [face_list])
@@ -103,12 +156,23 @@ def load_obj_parts(filename):
     return result
 
 
-# ─── Procedural geometry builders ─────────────────────────────────────────────
+# Procedural geometry builders
 
 def make_sun(R_inner=1.0, R_outer=1.7, N=12):
-    """
-    2D sun: N-gon body (triangle fan) + one outward spike per edge.
-    Built flat on the XZ plane, centered at origin.
+    """Build a 2D sun shape: a filled N-gon body with one outward spike per edge.
+
+    Geometry is flat on the XZ plane centered at the origin. Two passes over
+    the N rim points: the first fills the polygon body as a triangle fan from
+    the center; the second adds one isoceles spike per edge, with its tip at
+    the midpoint angle between adjacent rim vertices projected to R_outer.
+
+    Args:
+        R_inner: radius of the central polygon body.
+        R_outer: radius at the tip of each spike.
+        N:       number of polygon sides (and spikes).
+
+    Returns:
+        (start, count) tuple within vertices_list.
     """
     start = len(vertices_list)
     step = 2 * math.pi / N
@@ -133,9 +197,13 @@ def make_sun(R_inner=1.0, R_outer=1.7, N=12):
 
 
 def make_shark_fin():
-    """
-    Single shark fin in the XY plane, base centered at local origin.
-    Two triangles: main body + back-swept notch.
+    """Build a single shark fin shape on the XZ plane, base centered at the origin.
+
+    Defined by four hand-placed points forming two triangles: one for the main
+    body and one for the back-swept notch that gives the fin its silhouette.
+
+    Returns:
+        (start, count) tuple within vertices_list.
     """
     start   = len(vertices_list)
     p_front = [-0.20, 0.00, 0.0]
@@ -153,51 +221,21 @@ def make_shark_fin():
     return start, len(vertices_list) - start
 
 
-def make_cloud(seed, a=2.5, b=1.4, r_min=0.3, r_max=0.8, N=24, y=0.05):
-    """
-    Cloud: jittered hex grid of circles clipped to an ellipse (a × b).
-    Grid spacing = r_min * 1.8, which is < 2*r_min, so adjacent circles always
-    overlap — no gaps by construction. Jitter (30% of r_min) breaks hex
-    regularity for an organic silhouette.
-    """
-    rng   = np.random.default_rng(seed)
-    start = len(vertices_list)
-    step  = 2 * math.pi / N
-
-    col_step = r_min * 1.8                       # < 2*r_min → guaranteed overlap
-    row_step = col_step * math.sqrt(3) / 2       # hex row height
-    jitter   = r_min * 0.3
-
-    centers = []
-    row = 0
-    z = -b
-    while z <= b + row_step:
-        x_offset = (col_step / 2) * (row % 2)   # alternate rows offset for hex
-        x = -a
-        while x <= a + col_step:
-            jx = x + x_offset + rng.uniform(-jitter, jitter)
-            jz = z +             rng.uniform(-jitter, jitter)
-            if (jx / a) ** 2 + (jz / b) ** 2 <= 1.1:   # slight expansion covers edges
-                centers.append((jx, jz))
-            x += col_step
-        z += row_step
-        row += 1
-
-    for (cx, cz) in centers:
-        dist = min(math.sqrt((cx / a) ** 2 + (cz / b) ** 2), 1.0)
-        r    = r_max + (r_min - r_max) * dist
-        for i in range(N):
-            a1 = i * step
-            a2 = (i + 1) * step
-            vertices_list.append([cx,                     y, cz                    ])
-            vertices_list.append([cx + r * math.cos(a1),  y, cz + r * math.sin(a1)])
-            vertices_list.append([cx + r * math.cos(a2),  y, cz + r * math.sin(a2)])
-
-    return start, len(vertices_list) - start
-
-
 def make_sphere(radius=1.0, stacks=8, slices=8):
-    """UV sphere centered at origin."""
+    """Build a UV sphere centered at the origin.
+
+    Iterates over a latitude/longitude grid. Each (stack, slice) cell produces
+    two triangles from its four corner vertices, computed from spherical
+    coordinates (phi for latitude, theta for longitude).
+
+    Args:
+        radius: sphere radius in local units.
+        stacks: number of latitudinal subdivisions (rings from pole to pole).
+        slices: number of longitudinal subdivisions (segments around the equator).
+
+    Returns:
+        (start, count) tuple within vertices_list.
+    """
     start = len(vertices_list)
     for i in range(stacks):
         phi0 = math.pi * i       / stacks - math.pi / 2
@@ -217,9 +255,16 @@ def make_sphere(radius=1.0, stacks=8, slices=8):
 
 
 def make_sea_circle(radius=1.0, N=64):
-    """
-    Filled circle on the XZ plane (triangle fan).
-    Scale sx/sz in the model matrix to stretch into an ellipse.
+    """Build a filled circle on the XZ plane as a triangle fan.
+
+    Scale sx and sz in the model matrix to stretch the circle into an ellipse.
+
+    Args:
+        radius: circle radius before any model matrix scaling.
+        N:      number of triangle fan segments (higher = smoother edge).
+
+    Returns:
+        (start, count) tuple within vertices_list.
     """
     start = len(vertices_list)
     step  = 2 * math.pi / N
@@ -243,14 +288,3 @@ start_sun,     count_sun     = make_sun(R_inner=.8, R_outer=1.5, N=12)
 start_fin,     count_fin     = make_shark_fin()
 start_sea,     count_sea     = make_sea_circle(radius=1.0, N=64)
 start_particle, count_particle = make_sphere(radius=1.0, stacks=8, slices=8)
-
-# Each entry: (seed, world_x, world_y, world_z, ellipse_a, ellipse_b)
-CLOUD_DEFS = [
-    (11, 10.0, 12, -20.0, 3, 1.5),
-]
-
-clouds = []
-for (seed, *_rest) in CLOUD_DEFS:
-    a, b = _rest[3], _rest[4]
-    s, c = make_cloud(seed=seed, a=a, b=b)
-    clouds.append((s, c))

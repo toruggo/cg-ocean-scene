@@ -11,7 +11,6 @@ def key_event(window, key, scancode, action, mods):
     if key == glfw.KEY_P and action == glfw.PRESS:
         state.wireframe = not state.wireframe
 
-    # Track held keys for boat and scale movement
     if action == glfw.PRESS:
         state.keys_pressed.add(key)
     elif action == glfw.RELEASE:
@@ -19,7 +18,7 @@ def key_event(window, key, scancode, action, mods):
 
 
 def process_coqueiro_scale():
-    """A increases scale, Z decreases (clamped by state limits)."""
+    """Z increases scale, X decreases (clamped by state limits)."""
     if state.delta_time <= 0.0:
         return
     sp = state.COQUEIRO_SCALE_SPEED * state.delta_time
@@ -30,7 +29,6 @@ def process_coqueiro_scale():
 
 
 def process_boat():
-    """Called every frame. Reads keys_pressed and updates boat state."""
     if glfw.KEY_A in state.keys_pressed:
         state.boat_angle += state.BOAT_ROT * state.delta_time   # CCW = left
     if glfw.KEY_D in state.keys_pressed:
