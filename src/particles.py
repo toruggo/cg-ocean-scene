@@ -5,13 +5,16 @@ from .geometry import model_matrix
 
 
 class ParticleEmitter:
-    def __init__(self, base_pos,
-                 color=(0.5, 0.5, 0.5, 1.0),
-                 spawn_rate=2.0,
-                 lifetime=2.0,
-                 velocity=(0.0, 1.0, 0.0),
-                 max_scale=0.15,
-                 drag=0.0):
+    def __init__(
+        self,
+        base_pos,
+        color=(0.5, 0.5, 0.5, 1.0),
+        spawn_rate=2.0,
+        lifetime=2.0,
+        velocity=(0.0, 1.0, 0.0),
+        max_scale=0.15,
+        drag=0.0,
+    ):
         """
         base_pos   -- (x, y, z) world-space spawn point; update each frame for moving emitters
         spawn_rate -- particles per second
@@ -20,16 +23,18 @@ class ParticleEmitter:
                       direction-dependent emitters (e.g. bow spray)
         max_scale  -- sphere radius at birth; shrinks to 0 at end of lifetime
         """
-        self.base_pos   = list(base_pos)
-        self.color      = color
+        self.base_pos = list(base_pos)
+        self.color = color
         self.spawn_rate = spawn_rate
-        self.lifetime   = lifetime
-        self.velocity   = list(velocity)
-        self.max_scale  = max_scale
-        self.drag       = drag
-        self.active     = True   # set False to pause spawning; existing particles still finish
+        self.lifetime = lifetime
+        self.velocity = list(velocity)
+        self.max_scale = max_scale
+        self.drag = drag
+        self.active = (
+            True  # set False to pause spawning; existing particles still finish
+        )
 
-        self._particles = []   # each entry: [x, y, z, age, vx, vy, vz]
+        self._particles = []  # each entry: [x, y, z, age, vx, vy, vz]
         self._spawn_acc = 0.0
 
     def update(self, dt):
@@ -54,11 +59,12 @@ class ParticleEmitter:
     def draw(self, loc_model, loc_color):
         glUniform4f(loc_color, *self.color)
         for p in self._particles:
-            t     = p[3] / self.lifetime
+            t = p[3] / self.lifetime
             scale = self.max_scale * (1.0 - t)
-            glUniformMatrix4fv(loc_model, 1, GL_TRUE,
-                model_matrix(tx=p[0], ty=p[1], tz=p[2],
-                             sx=scale, sy=scale, sz=scale))
-            glDrawArrays(GL_TRIANGLES,
-                         geometry.start_particle,
-                         geometry.count_particle)
+            glUniformMatrix4fv(
+                loc_model,
+                1,
+                GL_TRUE,
+                model_matrix(tx=p[0], ty=p[1], tz=p[2], sx=scale, sy=scale, sz=scale),
+            )
+            glDrawArrays(GL_TRIANGLES, geometry.start_particle, geometry.count_particle)

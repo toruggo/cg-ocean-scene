@@ -30,9 +30,9 @@ def process_coqueiro_scale():
 
 def process_boat():
     if glfw.KEY_A in state.keys_pressed:
-        state.boat_angle += state.BOAT_ROT * state.delta_time   # CCW = left
+        state.boat_angle += state.BOAT_ROT * state.delta_time  # CCW = left
     if glfw.KEY_D in state.keys_pressed:
-        state.boat_angle -= state.BOAT_ROT * state.delta_time   # CW  = right
+        state.boat_angle -= state.BOAT_ROT * state.delta_time  # CW  = right
 
     state.boat_moving_forward = glfw.KEY_W in state.keys_pressed
 

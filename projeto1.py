@@ -70,9 +70,9 @@ while not glfw.window_should_close(window):
     glfw.poll_events()
     inp.process_coqueiro_scale()
     inp.process_boat()
-    state.shark_angle        += scene.SHARK_SPEED        * state.delta_time
+    state.shark_angle += scene.SHARK_SPEED * state.delta_time
     state.horizon_boat_angle += scene.HORIZON_BOAT_SPEED * state.delta_time
-    state.sun_spin           += state.SUN_SPIN_SPEED     * state.delta_time
+    state.sun_spin += state.SUN_SPIN_SPEED * state.delta_time
 
     glClearColor(0.53, 0.81, 0.98, 1.0)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)

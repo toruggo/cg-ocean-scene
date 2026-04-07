@@ -1,9 +1,10 @@
 from OpenGL.GL import *
 
+
 class Shader:
     def __init__(self, vertexPath: str, fragmentPath: str):
         try:
-            vertexCode   = open(vertexPath).read()
+            vertexCode = open(vertexPath).read()
             fragmentCode = open(fragmentPath).read()
 
             vertex = glCreateShader(GL_VERTEX_SHADER)
@@ -36,13 +37,25 @@ class Shader:
         glUseProgram(self.ID)
 
     def checkCompileErrors(self, shader: int, type: str) -> None:
-        if (type != "PROGRAM"):
+        if type != "PROGRAM":
             success = glGetShaderiv(shader, GL_COMPILE_STATUS)
-            if (not success):
+            if not success:
                 infoLog = glGetShaderInfoLog(shader)
-                print("ERROR::SHADER_COMPILATION_ERROR of type: " + type + "\n" + infoLog.decode() + "\n -- --------------------------------------------------- -- ")
+                print(
+                    "ERROR::SHADER_COMPILATION_ERROR of type: "
+                    + type
+                    + "\n"
+                    + infoLog.decode()
+                    + "\n -- --------------------------------------------------- -- "
+                )
         else:
             success = glGetProgramiv(shader, GL_LINK_STATUS)
-            if (not success):
+            if not success:
                 infoLog = glGetProgramInfoLog(shader)
-                print("ERROR::PROGRAM_LINKING_ERROR of type: " + type + "\n" + infoLog.decode() + "\n -- --------------------------------------------------- -- ")
+                print(
+                    "ERROR::PROGRAM_LINKING_ERROR of type: "
+                    + type
+                    + "\n"
+                    + infoLog.decode()
+                    + "\n -- --------------------------------------------------- -- "
+                )
