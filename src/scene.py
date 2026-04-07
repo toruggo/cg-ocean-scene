@@ -13,21 +13,23 @@ model_matrix = geometry.model_matrix
 
 class Scene:
 
-    SEA_SX = 40.0
-    SEA_SZ = 50.0
+    SEA_SX = 40.0  # world units
+    SEA_SZ = 50.0  # world units
 
-    # island1.obj Y: -0.559 → 0.857; lift by 0.559, top at 1.416
     ISLAND_SCALE = 1.5
-    ISLAND_POS = (-7.0, 1.5 * 0.559, -6.0)  # ty keeps base at y=0
+    ISLAND_POS = (
+        -7.0,
+        1.5 * 0.559,
+        -6.0,
+    )  # ty = scale x model min-Y, lifts base to y=0
 
-    # lighthouse.obj Y: 0.000 → 9.802; place on island top
     LIGHTHOUSE_SCALE = 0.3
-    LIGHTHOUSE_POS = (-7.0, 1.5 * 1.416, -6.0)  # on scaled island top
+    LIGHTHOUSE_POS = (-7.0, 1.5 * 1.416, -6.0)  # ty = island scale x island top height
 
     LH_PART_COLORS = {
-        "lighthouse_body": (0.980, 0.361, 0.361, 1.0),  # rgb(250,  92,  92)
-        "Cylinder.001": (0.992, 0.541, 0.420, 1.0),  # rgb(253, 138, 107)
-        "lighthouse_top_floor": (0.996, 0.761, 0.533, 1.0),  # rgb(254, 194, 136)
+        "lighthouse_body": (0.980, 0.361, 0.361, 1.0),  # #FA5C5C
+        "Cylinder.001": (0.992, 0.541, 0.420, 1.0),  # #FD8A6B
+        "lighthouse_top_floor": (0.996, 0.761, 0.533, 1.0),  # #FEC288
         "lighthouse_light": (0.984, 0.937, 0.463, 1.0),  # #FBEF76
     }
 
@@ -43,8 +45,7 @@ class Scene:
         "folhas": (0.18, 0.62, 0.28, 1.0),
     }
 
-    # volcano_rock.obj Y: -1.363 → 5.598; lift by 1.363
-    VOLCANO_POS = (7.0, 1.363, 5.0)
+    VOLCANO_POS = (7.0, 1.363, 5.0)  # ty = model min-Y, lifts base to y=0
 
     SUN_POS = (20.0, 12.0, -15.0)
     SUN_SCALE = 2.0
@@ -52,6 +53,7 @@ class Scene:
     SUN_ROT_AXIS = (1.0, 0.0, 1.0)
 
     BOAT_SCALE = 0.6
+    BOAT_BASE_Y = 0.4  # resting waterline height, world units
     BOAT_BOB_AMPLITUDE = 0.10  # world units
     BOAT_BOB_SPEED = 1.5  # radians per second (primary wave)
 
@@ -72,7 +74,7 @@ class Scene:
     BOW_BACKWARD_SPEED = 2  # backward component, world units/s
 
     HORIZON_BOAT_COUNT = 3
-    HORIZON_BOAT_RADIUS = 40.0
+    HORIZON_BOAT_RADIUS = 40.0  # world units
     HORIZON_BOAT_CENTER = (0.0, 0.0, 0.0)
     HORIZON_BOAT_SPEED = 2.0  # degrees per second
     HORIZON_BOAT_SCALE = 0.6 * 0.8
@@ -87,7 +89,7 @@ class Scene:
 
     SHARK_COUNT = 3
     SHARK_CENTER = (0.0, 0.0, 0.0)
-    SHARK_RADIUS = 3.0
+    SHARK_RADIUS = 3.0  # world units
     SHARK_SPEED = 25.0  # degrees per second
     SHARK_FIN_SCALE = 0.6
 
@@ -150,7 +152,7 @@ class Scene:
         self.volcano_smoke = ParticleEmitter(
             base_pos=(
                 self.VOLCANO_POS[0],
-                self.VOLCANO_POS[1] + 5.6,
+                self.VOLCANO_POS[1] + 5.6,  # crater top offset in model space
                 self.VOLCANO_POS[2],
             ),
             color=(0.30, 0.28, 0.28, 1.0),
@@ -218,6 +220,11 @@ class Scene:
         glDrawArrays(GL_TRIANGLES, geometry.start_sea, geometry.count_sea)
 
     def draw_sharks(self):
+        """Draw SHARK_COUNT fins evenly distributed around a circular orbit.
+
+        Each fin is rotated to face its direction of travel. Also updates each
+        shark trail emitter's position to follow its fin.
+        """
         glUniform4f(self.loc_color, 0.25, 0.25, 0.30, 1.0)
         s = self.SHARK_FIN_SCALE
         for i in range(self.SHARK_COUNT):
@@ -244,6 +251,11 @@ class Scene:
             self.shark_trails[i].base_pos = [x, self.SHARK_CENTER[1], z]
 
     def draw_horizon_boats(self):
+        """Draw HORIZON_BOAT_COUNT boats evenly distributed around a circular orbit.
+
+        Each boat faces the tangent of its orbit so it appears to sail forward.
+        Also updates each chimney smoke emitter's position to follow its boat.
+        """
         s = self.HORIZON_BOAT_SCALE
         cx, _, cz = self.HORIZON_BOAT_CENTER
         for i in range(self.HORIZON_BOAT_COUNT):
@@ -251,9 +263,9 @@ class Scene:
             orbit_rad = math.radians(orbit_deg)
             x = cx + self.HORIZON_BOAT_RADIUS * math.sin(orbit_rad)
             z = cz + self.HORIZON_BOAT_RADIUS * math.cos(orbit_rad)
-            facing = 90.0 + orbit_deg  # tangent of CCW orbit
+            facing = 90.0 + orbit_deg
             mat = model_matrix(
-                angle=facing, ry=1.0, tx=x, ty=0.4, tz=z, sx=s, sy=s, sz=s
+                angle=facing, ry=1.0, tx=x, ty=self.BOAT_BASE_Y, tz=z, sx=s, sy=s, sz=s
             )
             glUniformMatrix4fv(self.loc_model, 1, GL_TRUE, mat)
             for name, (start, count) in geometry.boat_parts.items():
@@ -267,7 +279,7 @@ class Scene:
                     s,
                     facing,
                     x,
-                    0.4,
+                    self.BOAT_BASE_Y,
                     z,
                 )
             )
@@ -342,8 +354,16 @@ class Scene:
         glDrawArrays(GL_TRIANGLES, geometry.start_volcano, geometry.count_volcano)
 
     def draw_boat(self):
+        """Draw the player boat with a bobbing animation and update its particle emitters.
+
+        Computes a bob offset from a two-frequency sine wave and applies it to the
+        model matrix. Also repositions the chimney smoke emitter to the chimney top
+        and updates the bow spray emitters with the correct world position and
+        sideways/backward velocity based on the current heading.
+        """
         s = self.BOAT_SCALE
         t = self.BOAT_BOB_SPEED * state.last_frame
+        # sum of two sine waves at different frequencies for a natural-looking bob
         bob = self.BOAT_BOB_AMPLITUDE * (
             0.6 * math.sin(t) + 0.4 * math.sin(2.3 * t + 0.8)
         )
@@ -351,7 +371,7 @@ class Scene:
             angle=state.boat_angle,
             ry=1.0,
             tx=state.boat_x,
-            ty=0.4 + bob,
+            ty=self.BOAT_BASE_Y + bob,
             tz=state.boat_z,
             sx=s,
             sy=s,
@@ -369,32 +389,33 @@ class Scene:
                 s,
                 state.boat_angle,
                 state.boat_x,
-                0.4 + bob,
+                self.BOAT_BASE_Y + bob,
                 state.boat_z,
             )
         )
 
-        angle_rad = math.radians(state.boat_angle)
         wx3, wy3, wz3 = self._local_to_world(
             self.BOW_LOCAL,
             s,
             state.boat_angle,
             state.boat_x,
-            0.4 + bob,
+            self.BOAT_BASE_Y + bob,
             state.boat_z,
         )
-        # Spray = sideways + backward (backward = -heading = (-sin θ, 0, -cos θ))
-        ss = self.BOW_SPRAY_SPEED
-        sb = self.BOW_BACKWARD_SPEED
+
+        # Each spray shoots outward to its side and backward, relative to the boat's heading
+        angle_rad = math.radians(state.boat_angle)
+        lat = self.BOW_SPRAY_SPEED
+        bwd = self.BOW_BACKWARD_SPEED
         right = [
-            math.cos(angle_rad) * ss - math.sin(angle_rad) * sb,
+            math.cos(angle_rad) * lat - math.sin(angle_rad) * bwd,
             0.0,
-            -math.sin(angle_rad) * ss - math.cos(angle_rad) * sb,
+            -math.sin(angle_rad) * lat - math.cos(angle_rad) * bwd,
         ]
         left = [
-            -math.cos(angle_rad) * ss - math.sin(angle_rad) * sb,
+            -math.cos(angle_rad) * lat - math.sin(angle_rad) * bwd,
             0.0,
-            math.sin(angle_rad) * ss - math.cos(angle_rad) * sb,
+            math.sin(angle_rad) * lat - math.cos(angle_rad) * bwd,
         ]
         self.bow_port.base_pos = [wx3, wy3, wz3]
         self.bow_port.velocity = left
