@@ -29,12 +29,23 @@ None of these three concerns belongs in the same object.
 | `emitter_anchor` on `ObjectConfig` repositions `emitters[0]` | Implicit index contract; config shouldn't know about particles | Move `anchor` to the `ParticleEmitter` itself |
 | `y_rotation` property uses `abs(axis[1]) > 0.9` heuristic | `_local_to_world` and `Transform` disagree on rotation model | Delete property; add explicit `transform.heading` field |
 | `GrowingObject` is a subclass for one line | `scale_fn` callable wraps a single field assignment | Delete class; set scale in `Scene.update()` before the loop |
-| `OrbitalGroup` never creates emitters for its instances | Doc hand-waved emitter creation; parameters have to come from somewhere | Add `make_emitter` factory callable parameter |
+| `OrbitalGroup` never creates emitters for its instances | Doc hand-waved emitter creation | Add `make_emitter` factory callable parameter |
 | `configs.py` imports `CHIMNEY_TOP_LOCAL` from `scene.py` | Circular dependency risk | Move boat constants to `objects.py` |
-| `lm`/`lc` inconsistently passed through constructors | Every object needs the same two uniforms from the same program | `SceneObject.init_gl(program)` classmethod; set once |
+| `lm`/`lc` threaded through every constructor | Every object needs the same two uniforms | `SceneObject.init_gl(program)` classmethod; set once |
+
+### v3 problems (review_3.md)
+
+| Problem | Cause | Fix |
+|---|---|---|
+| `state.py` is a grab bag of unrelated globals | Path-of-least-resistance module everyone imports | Redistribute: constants → classes; per-object state → objects; input state → `input.py`; remnant → `AppState` |
+| `PlayerBoat.update()` reads `state.boat_x/z/angle` | Hidden coupling through shared globals | `input.py` holds boat reference via `set_target()`; writes to `target.transform` directly |
+| `SpinningSun` reads `state.sun_spin` | Sun spin is per-object state, not application state | `SpinningSun` owns `_spin` and increments it each frame |
+| `BobbingObject` reads `state.last_frame` | Accumulated time is per-object state | `BobbingObject` owns `_time` accumulator; increments by `dt` each frame |
+| Camera matrices in `state.py` | They never change; they're scene setup, not state | Move to `scene.py.__init__` |
 
 After all fixes, genuine behavior subclasses: `BobbingObject`, `SpinningSun`,
 `PlayerBoat` — each exists for per-frame logic, not transform limitations.
+`state.py` is gutted and replaced by a minimal `AppState` dataclass.
 
 ---
 
@@ -43,13 +54,89 @@ After all fixes, genuine behavior subclasses: `BobbingObject`, `SpinningSun`,
 ```
 src/
   objects.py   # Transform, ObjectConfig, SceneObject, behavior subclasses,
-               # OrbitalGroup, boat constants (CHIMNEY_TOP_LOCAL, BOW_LOCAL)
-  configs.py   # One ObjectConfig per visual identity; imports from objects.py
-  scene.py     # Wires configs + transforms into objects; loops update/draw
+               # OrbitalGroup, _make_emitter, boat constants
+  configs.py   # One ObjectConfig per visual identity
+  scene.py     # Wires objects; loops update/draw; owns camera setup
+  app.py       # AppState dataclass — the only remaining shared mutable state
+  input.py     # Key handlers; set_target(boat); owns keys_pressed + constants
+  geometry.py  # Unchanged
+  particles.py # +1 line: self.anchor = None
+  state.py     # Deleted — contents redistributed
 ```
 
-`geometry.py`, `state.py`, `input.py` are unchanged.
-`particles.py` gets one line: `self.anchor = None` in `ParticleEmitter.__init__`.
+---
+
+## `state.py` surgery
+
+`state.py` existed as the path of least resistance — every module imports it,
+everyone reads and writes. The object refactor naturally empties it. Here is
+where each piece goes.
+
+### Constants → behavior classes
+
+These are not state. They are parameters for specific behaviors and belong
+next to the code that uses them.
+
+| Variable | Moves to |
+|---|---|
+| `BOAT_SPEED = 2.0` | `input.py` |
+| `BOAT_ROT = 45.0` | `input.py` |
+| `COQUEIRO_SCALE_MIN/MAX/SPEED` | `input.py` |
+| `SUN_SPIN_SPEED = 5.0` | `SpinningSun` (class constant) |
+
+### Per-object mutable state → objects own it
+
+| Variable | Moves to |
+|---|---|
+| `shark_angle` | `OrbitalGroup.orbit_angle` (already) |
+| `horizon_boat_angle` | `OrbitalGroup.orbit_angle` (already) |
+| `sun_spin` | `SpinningSun._spin` |
+| `boat_x/z/angle` | `player_boat.transform` — written by `input.py` |
+
+### Input state → `input.py`
+
+`keys_pressed` and the `boat_moving_forward` flag are the bridge between GLFW
+callbacks and game logic. They belong in the module that owns the callbacks.
+
+| Variable | Moves to |
+|---|---|
+| `keys_pressed` | `input.py` module-level |
+| `boat_moving_forward` | `player_boat.moving_forward` — set by `input.py` |
+
+### Camera → `scene.py.__init__`
+
+`STATIC_CAM_POS`, `STATIC_CAM_TARGET`, `mat_view_static`, and `mat_proj_static`
+never change. They are scene setup constants, not application state. They move
+into `Scene.__init__` as locals and are passed to `set_view_projection`.
+
+### What actually remains: `AppState`
+
+After the above redistribution, two values genuinely cross the
+`input.py` / `scene.py` boundary and have no other clean home:
+
+```python
+# src/app.py
+from dataclasses import dataclass
+
+@dataclass
+class AppState:
+    width:          int   = 960
+    height:         int   = 720
+    coqueiro_scale: float = 0.01
+    wireframe:      bool  = False
+```
+
+`coqueiro_scale` is written by the Z/X key handler in `input.py` and read by
+`Scene.update()`. `wireframe` is toggled by P in `input.py` and read by the
+render loop. `width`/`height` are needed for the projection matrix in `scene.py`.
+
+`delta_time` and `last_frame` are **not** in `AppState`. After the refactor,
+`dt` is passed explicitly to every `update(dt)` call, and `BobbingObject` owns
+its own `_time` accumulator — no module needs to read a shared elapsed time.
+
+One `AppState` instance is created in `main_scene.py` and passed to anything
+that needs it. Functions declare the dependency in their signature instead of
+silently reaching into a module.
 
 ---
 
@@ -61,11 +148,10 @@ Per-instance mutable placement. Separated from `ObjectConfig` because config
 is shared identity (player boat and horizon boat share the same mesh config)
 while transform is per-instance state mutated every frame.
 
-The `heading` field is explicit — it is set alongside `rotations` by any object
-that faces a direction. It is the Y-rotation angle used by `_local_to_world`
-for emitter anchor math. It is **not** derived from `rotations` by inspection:
-that heuristic (v2's `y_rotation` property) silently fails for non-trivial
-rotation chains. Keeping them separate is honest about the limitation.
+The `heading` field is explicit — set alongside `rotations` by any object that
+faces a direction. Used by `_local_to_world` for emitter anchor math. Not
+derived from `rotations` by inspection (that heuristic silently fails for
+non-trivial rotation chains).
 
 ```python
 @dataclass
@@ -109,8 +195,8 @@ class ObjectConfig:
 
 ### `SceneObject`
 
-Base class. Class-level GL uniforms set once. Owns a `Transform` and a list
-of `ParticleEmitter`s.
+Base class. Class-level GL uniforms set once via `init_gl`. Owns a `Transform`
+and a list of `ParticleEmitter`s.
 
 ```python
 class SceneObject:
@@ -152,23 +238,17 @@ class SceneObject:
             e.update(dt)
 ```
 
-The `update()` loop repositions every emitter whose `.anchor` is set, in any
-order, with no index assumptions. Multiple anchored emitters on the same object
-work correctly.
-
 ### `ParticleEmitter.anchor`
 
 One-line addition to `particles.py`:
 
 ```python
-# In ParticleEmitter.__init__:
 self.anchor = None   # local-space offset; set by owner when needed
 ```
 
-When `anchor` is not None, `SceneObject.update()` calls `_local_to_world` to
-compute the world-space `base_pos` each frame. The anchor lives on the emitter —
-the thing being positioned — not on the config, which describes visual identity
-and should not know about particle systems.
+The anchor lives on the emitter — the thing being positioned — not on the
+config. `SceneObject.update()` repositions every emitter with a non-None
+anchor. No index magic, any number of anchored emitters per object.
 
 ---
 
@@ -176,19 +256,22 @@ and should not know about particle systems.
 
 ### `BobbingObject(SceneObject)`
 
-Animates `transform.pos[1]` with a two-frequency sine wave. Any floating object.
+Animates `transform.pos[1]` with a two-frequency sine wave. Owns its own
+`_time` accumulator — no shared elapsed-time state needed.
 
 ```python
 class BobbingObject(SceneObject):
     def __init__(self, config, transform=None,
                  base_y=0.4, amplitude=0.10, speed=1.5):
         super().__init__(config, transform)
+        self._time     = 0.0
         self.base_y    = base_y
         self.amplitude = amplitude
         self.speed     = speed
 
     def update(self, dt):
-        t = self.speed * state.last_frame
+        self._time += dt
+        t = self.speed * self._time
         self.transform.pos[1] = self.base_y + self.amplitude * (
             0.6 * math.sin(t) + 0.4 * math.sin(2.3 * t + 0.8)
         )
@@ -197,30 +280,38 @@ class BobbingObject(SceneObject):
 
 ### `SpinningSun(SceneObject)`
 
-Updates `transform.rotations` from state each frame. Exists for animated
-behavior, not for a transform limitation.
+Owns its spin angle and spin speed. No longer reads from `state`. Exists
+because it has animated per-frame behavior, not because of a transform limitation.
 
 ```python
 class SpinningSun(SceneObject):
+    SUN_SPIN_SPEED = 5.0   # moved from state.py
+
+    def __init__(self, config, transform=None):
+        super().__init__(config, transform)
+        self._spin = 0.0
+
     def update(self, dt):
+        self._spin += self.SUN_SPIN_SPEED * dt
         self.transform.rotations = [
-            (90.0,           (1.0, 0.0, 1.0)),  # fixed tilt
-            (state.sun_spin, (0.0, 1.0, 0.0)),  # animated spin
+            (90.0,        (1.0, 0.0, 1.0)),   # fixed tilt
+            (self._spin,  (0.0, 1.0, 0.0)),   # animated spin
         ]
         super().update(dt)
 ```
 
-The sun has no emitters so `heading` is never used; no need to set it.
-
 ### `PlayerBoat(BobbingObject)`
 
-Syncs position and facing from `state`. Handles bow spray, which requires two
-emitters with heading-dependent velocities — not reducible to the anchor pattern.
+Handles bow spray — two emitters with heading-dependent velocities, not
+reducible to the anchor pattern. **Does not read from `state`**. Its
+`transform` is written by `input.py` each frame via the `set_target` binding.
 
 ```python
 class PlayerBoat(BobbingObject):
     def __init__(self, config, transform=None, base_y=0.4):
         super().__init__(config, transform, base_y=base_y)
+        self.moving_forward = False   # set each frame by input handler
+
         self._smoke    = ParticleEmitter(base_pos=[0,0,0], color=(0.55,0.55,0.55,1),
                                          spawn_rate=2.0, lifetime=2.0,
                                          velocity=(0,1.2,0), max_scale=0.12)
@@ -235,10 +326,7 @@ class PlayerBoat(BobbingObject):
         self.emitters = [self._smoke, self._bow_port, self._bow_stbd]
 
     def update(self, dt):
-        self.transform.pos[0] = state.boat_x
-        self.transform.pos[2] = state.boat_z
-        self.transform.heading   = state.boat_angle   # explicit; used by smoke anchor
-        self.transform.rotations = [(state.boat_angle, (0, 1, 0))]
+        # transform.pos[0/2], heading, rotations are written by input.process_boat()
         super().update(dt)    # bobs pos[1]; repositions _smoke via anchor
         self._update_bow_spray()
 
@@ -249,8 +337,8 @@ class PlayerBoat(BobbingObject):
         )
         a = math.radians(self.transform.heading)
         lat, bwd = BOW_SPRAY_SPEED, BOW_BACKWARD_SPEED
-        self._bow_port.active  = state.boat_moving_forward
-        self._bow_stbd.active  = state.boat_moving_forward
+        self._bow_port.active  = self.moving_forward   # reads own attribute, not state
+        self._bow_stbd.active  = self.moving_forward
         self._bow_port.base_pos = [wx, wy, wz]
         self._bow_port.velocity = [-math.cos(a)*lat - math.sin(a)*bwd, 0.0,
                                     math.sin(a)*lat - math.cos(a)*bwd]
@@ -259,10 +347,69 @@ class PlayerBoat(BobbingObject):
                                    -math.sin(a)*lat - math.cos(a)*bwd]
 ```
 
-`_smoke.anchor` is set on the emitter itself; `super().update(dt)` uses
-`transform.heading` to reposition it correctly. Only bow spray needs explicit
-code because its velocity depends on heading and it has two emitters at the same
-anchor point — the single-emitter pattern doesn't fit.
+---
+
+## `input.py`
+
+The input module gains a boat reference and owns the constants that were
+previously scattered in `state.py`. It writes directly to the boat's `Transform`
+instead of writing to shared globals that `PlayerBoat.update()` would later read.
+
+```python
+# src/input.py
+
+BOAT_SPEED           = 2.0    # moved from state.py
+BOAT_ROT             = 45.0
+COQUEIRO_SCALE_MIN   = 0.01
+COQUEIRO_SCALE_MAX   = 0.15
+COQUEIRO_SCALE_SPEED = 0.18
+
+keys_pressed = set()   # moved from state.py
+_target      = None    # PlayerBoat reference
+
+def set_target(boat):
+    global _target
+    _target = boat
+
+def key_event(window, key, scancode, action, mods):
+    # (wireframe toggle needs app reference — pass via set_app or module-level)
+    if action == glfw.PRESS:
+        keys_pressed.add(key)
+    elif action == glfw.RELEASE:
+        keys_pressed.discard(key)
+
+def process_boat(dt):
+    if _target is None:
+        return
+    if glfw.KEY_A in keys_pressed:
+        _target.transform.heading += BOAT_ROT * dt
+    if glfw.KEY_D in keys_pressed:
+        _target.transform.heading -= BOAT_ROT * dt
+    _target.transform.rotations = [(_target.transform.heading, (0, 1, 0))]
+
+    _target.moving_forward = glfw.KEY_W in keys_pressed
+
+    dx = math.sin(math.radians(_target.transform.heading))
+    dz = math.cos(math.radians(_target.transform.heading))
+    if glfw.KEY_W in keys_pressed:
+        _target.transform.pos[0] += dx * BOAT_SPEED * dt
+        _target.transform.pos[2] += dz * BOAT_SPEED * dt
+    if glfw.KEY_S in keys_pressed:
+        _target.transform.pos[0] -= dx * BOAT_SPEED * dt
+        _target.transform.pos[2] -= dz * BOAT_SPEED * dt
+
+def process_coqueiro_scale(dt, app):
+    sp = COQUEIRO_SCALE_SPEED * dt
+    if glfw.KEY_Z in keys_pressed:
+        app.coqueiro_scale = min(COQUEIRO_SCALE_MAX, app.coqueiro_scale + sp)
+    if glfw.KEY_X in keys_pressed:
+        app.coqueiro_scale = max(COQUEIRO_SCALE_MIN, app.coqueiro_scale - sp)
+```
+
+`process_boat` uses `_target.transform.heading` directly — not
+`rotations[0][0]` — because `heading` is the explicitly maintained Y-angle
+field. The coupling between input and scene is now explicit and visible:
+`set_target` documents what the input module depends on.
 
 ---
 
@@ -271,10 +418,6 @@ anchor point — the single-emitter pattern doesn't fit.
 `OrbitalGroup` is not a `SceneObject`. It owns N independent `SceneObject`
 instances, each with its own `Transform`. The scene treats it as a duck-typed
 object with `update(dt)` and `draw()`.
-
-`make_emitter` is an optional factory callable that creates one `ParticleEmitter`
-per instance. Emitter parameters (color, lifetime, etc.) differ between object
-types, so they belong at the call site, not hardcoded in `OrbitalGroup`.
 
 ```python
 class OrbitalGroup:
@@ -299,7 +442,7 @@ class OrbitalGroup:
             rad = math.radians(deg)
             obj.transform.pos[0]    = self.center[0] + self.radius * math.sin(rad)
             obj.transform.pos[2]    = self.center[2] + self.radius * math.cos(rad)
-            obj.transform.heading   = self.facing_offset + deg   # explicit
+            obj.transform.heading   = self.facing_offset + deg
             obj.transform.rotations = [(obj.transform.heading, (0, 1, 0))]
             obj.update(dt)    # base class repositions anchored emitters
 
@@ -308,23 +451,17 @@ class OrbitalGroup:
             obj.draw()
 ```
 
-**Facing offset:**
-- Sharks `facing_offset=0.0` — fin mesh naturally faces travel direction
-- Horizon boats `facing_offset=90.0` — boat mesh needs +90° to face tangent
-
-**`orbit_angle` is owned here**, updated via `speed * dt`. The old
-`state.shark_angle` and `state.horizon_boat_angle` globals become unused.
+**Facing offset:** sharks `0.0`, horizon boats `90.0`.
+**`orbit_angle` is owned here** — `state.shark_angle` and
+`state.horizon_boat_angle` are gone.
 
 ---
 
 ## `configs.py`
 
-`CHIMNEY_TOP_LOCAL` and `BOW_LOCAL` live in `objects.py` (not `scene.py`),
-so `configs.py` can import them without a circular dependency.
-
 ```python
 from . import geometry
-from .objects import ObjectConfig   # no CHIMNEY_TOP_LOCAL needed here
+from .objects import ObjectConfig
 
 SEA = ObjectConfig(
     default_color=(0.05, 0.35, 0.65, 1.0),
@@ -384,16 +521,25 @@ SHARK_FIN = ObjectConfig(
 )
 ```
 
-No `emitter_anchor` fields anywhere — anchors live on the emitters.
-
 ---
 
 ## `scene.py` — assembly
 
+Camera setup moves here from `state.py`. `update` takes `app` to read
+`coqueiro_scale` — the one value that crosses the input/scene boundary.
+
 ```python
 class Scene:
-    def __init__(self, program):
-        SceneObject.init_gl(program)    # sets loc_model, loc_color once
+    def __init__(self, program, app):
+        SceneObject.init_gl(program)
+
+        # Camera — was in state.py; never changes, belongs in scene setup
+        cam_pos    = glm.vec3(-24.5841, 8.5859, 11.4405)
+        cam_target = glm.vec3(-23.7209, 8.4037, 10.9698)
+        self._mat_view = np.array(glm.lookAt(cam_pos, cam_target, glm.vec3(0,1,0)))
+        self._mat_proj = np.array(
+            glm.perspective(glm.radians(40.0), app.width / app.height, 0.1, 200.0)
+        )
 
         coqueiro_transforms = [
             Transform(pos=[-9.300, 1.998, -6.039], rotations=[(2.3,  (0,1,0)), (0.0,  (1,0,0))]),
@@ -427,7 +573,6 @@ class Scene:
                          )),
         ]
 
-        # Volcano: static emitter, world pos never changes, no anchor needed
         volcano = SceneObject(configs.VOLCANO, Transform(pos=[7.0, 1.363, 5.0]))
         volcano.emitters.append(ParticleEmitter(
             base_pos=[7.0, 1.363 + 5.6, 5.0],
@@ -437,9 +582,12 @@ class Scene:
         ))
         self.objects.append(volcano)
 
-    def update(self, dt):
+    def get_player_boat(self):
+        return next(o for o in self.objects if isinstance(o, PlayerBoat))
+
+    def update(self, dt, app):
         for tree in self._coqueiros:
-            tree.transform.scale = state.coqueiro_scale   # explicit; no subclass
+            tree.transform.scale = app.coqueiro_scale
         for obj in self.objects:
             obj.update(dt)
 
@@ -447,35 +595,42 @@ class Scene:
         for obj in self.objects:
             obj.draw()
 
-    def set_view_projection(self, mat_view, mat_proj):
-        glUniformMatrix4fv(SceneObject.loc_model, 1, GL_TRUE, mat_view)    # reuse uniform locs
-        glUniformMatrix4fv(SceneObject.loc_projection, 1, GL_TRUE, mat_proj)
+    def set_view_projection(self):
+        glUniformMatrix4fv(SceneObject.loc_model, 1, GL_TRUE, self._mat_view)
+        glUniformMatrix4fv(SceneObject.loc_projection, 1, GL_TRUE, self._mat_proj)
 ```
 
-`_make_emitter` is a small helper in `objects.py` that constructs a
-`ParticleEmitter` and sets its `anchor` attribute:
-
-```python
-def _make_emitter(anchor=None, **kwargs) -> ParticleEmitter:
-    e = ParticleEmitter(**kwargs)
-    e.anchor = anchor
-    return e
-```
-
-Coqueiro scale is three lines in `Scene.update()`, not a subclass. Everyone can
-read it. Adding a new scene object is one line in `__init__`. No new draw method.
+`get_player_boat()` is called once in `main_scene.py` to bind the boat to
+the input handler. `update` takes `app` explicitly — the dependency is declared
+in the signature.
 
 ---
 
-## What does NOT change
+## `main_scene.py` wiring
+
+```python
+app   = AppState()
+scene = Scene(program, app)
+inp.set_target(scene.get_player_boat())
+
+# per-frame loop:
+inp.process_boat(dt)
+inp.process_coqueiro_scale(dt, app)
+scene.update(dt, app)
+scene.draw_all()
+```
+
+---
+
+## What changes
 
 | Module | Change |
 |---|---|
 | `geometry.py` | None. Clean already. |
-| `state.py` | Remove `shark_angle`, `horizon_boat_angle` — owned by each `OrbitalGroup` now. |
 | `particles.py` | One line: `self.anchor = None` in `__init__`. |
-| `input.py` | Remove updates to the two deleted state globals. |
-| `main_scene.py` | Calls `scene.update(dt)` and `scene.draw_all()` — interface unchanged. |
+| `state.py` | **Deleted.** Contents redistributed (see surgery section). |
+| `input.py` | Gains `set_target`, `keys_pressed`, boat constants; writes to `target.transform`. |
+| `main_scene.py` | Creates `AppState`; calls `inp.set_target`; passes `app` to `scene.update`. |
 
 ---
 
@@ -485,21 +640,26 @@ Each step leaves the program runnable.
 
 1. **Add `self.anchor = None`** to `ParticleEmitter.__init__`. No behavior change.
 
-2. **Create `src/objects.py`** — `Transform`, `ObjectConfig`, `SceneObject.init_gl`,
-   `BobbingObject`, `SpinningSun`, `PlayerBoat`, `OrbitalGroup`, `_make_emitter`,
-   and the boat constants (`CHIMNEY_TOP_LOCAL`, `BOW_LOCAL`).
+2. **Create `src/app.py`** with `AppState`. No other changes yet.
 
-3. **Create `src/configs.py`** — all `ObjectConfig` instances, importing from
+3. **Create `src/objects.py`** — `Transform`, `ObjectConfig`, `SceneObject.init_gl`,
+   `BobbingObject`, `SpinningSun`, `PlayerBoat`, `OrbitalGroup`, `_make_emitter`,
+   boat constants. Import cleanly; no reference to `state`.
+
+4. **Create `src/configs.py`** — all `ObjectConfig` instances, importing from
    `objects.py` and `geometry.py` only.
 
-4. **Wire `OrbitalGroup`** for sharks and horizon boats alongside the existing
+5. **Update `input.py`** — add `set_target`, move `keys_pressed` and constants here,
+   rewrite `process_boat` to write to `_target.transform`. Remove `state` imports.
+
+6. **Wire `OrbitalGroup`** for sharks and horizon boats alongside the existing
    scene. Verify orbit positions, facing, and emitter smoke visually.
 
-5. **Wire `PlayerBoat`** with all three emitters. Verify bobbing, chimney smoke,
+7. **Wire `PlayerBoat`** with all three emitters. Verify bobbing, chimney smoke,
    and bow spray match existing behavior.
 
-6. **Replace `scene.py`** — swap the per-draw-function structure for the
-   `self.objects` list. Full visual regression pass.
+8. **Replace `scene.py`** — swap per-draw-function structure for `self.objects` list;
+   move camera setup in; pass `app` to `update`. Full visual regression pass.
 
-7. **Remove dead globals** — `shark_angle` and `horizon_boat_angle` from
-   `state.py`, and the code in `input.py` that updated them.
+9. **Delete `state.py`** — at this point nothing should import it. Fix any remaining
+   references. `main_scene.py` creates `AppState` and wires everything.
