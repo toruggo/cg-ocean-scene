@@ -43,6 +43,16 @@ None of these three concerns belongs in the same object.
 | `BobbingObject` reads `state.last_frame` | Accumulated time is per-object state | `BobbingObject` owns `_time` accumulator; increments by `dt` each frame |
 | Camera matrices in `state.py` | They never change; they're scene setup, not state | Move to `scene.py.__init__` |
 
+### v4 problems (review_4.md)
+
+| Problem | Cause | Fix |
+|---|---|---|
+| `set_view_projection` uploads view matrix to model uniform | `loc_model` used instead of `loc_view`/`loc_projection` — silent black-screen bug | Add `loc_view` and `loc_projection` to `SceneObject.init_gl` |
+| `coqueiro_scale` in `AppState` | Same pattern as boat: input writes, scene reads via shared state | `set_coqueiros(trees)` in `input.py`; write directly to `tree.transform.scale`; remove `app` from `scene.update` |
+| `PlayerBoat` hardcodes emitter parameters | Inconsistent with `OrbitalGroup`'s `make_emitter` pattern everywhere else | Add comment: singleton justification |
+| `_make_emitter` referenced but not defined in doc | Omission | Show implementation in `objects.py` section |
+| `OrbitalGroup` duck typing undocumented | Contract only implicit | Add `Drawable` Protocol; annotate `self.objects` |
+
 After all fixes, genuine behavior subclasses: `BobbingObject`, `SpinningSun`,
 `PlayerBoat` — each exists for per-frame logic, not transform limitations.
 `state.py` is gutted and replaced by a minimal `AppState` dataclass.
@@ -111,8 +121,8 @@ into `Scene.__init__` as locals and are passed to `set_view_projection`.
 
 ### What actually remains: `AppState`
 
-After the above redistribution, two values genuinely cross the
-`input.py` / `scene.py` boundary and have no other clean home:
+After the above redistribution, one value genuinely crosses the
+`input.py` / `scene.py` boundary and has no other clean home:
 
 ```python
 # src/app.py
@@ -120,15 +130,18 @@ from dataclasses import dataclass
 
 @dataclass
 class AppState:
-    width:          int   = 960
-    height:         int   = 720
-    coqueiro_scale: float = 0.01
-    wireframe:      bool  = False
+    width:     int  = 960
+    height:    int  = 720
+    wireframe: bool = False
 ```
 
-`coqueiro_scale` is written by the Z/X key handler in `input.py` and read by
-`Scene.update()`. `wireframe` is toggled by P in `input.py` and read by the
-render loop. `width`/`height` are needed for the projection matrix in `scene.py`.
+`wireframe` is toggled by P in `input.py` and read by the render loop.
+`width`/`height` are needed for the projection matrix in `scene.py`.
+
+`coqueiro_scale` is **not** in `AppState`. It follows the same pattern as
+`boat_x/z/angle`: input writes it, objects read it. The fix is the same —
+`input.py` holds coqueiro references via `set_coqueiros()` and writes directly
+to `tree.transform.scale`. No shared state needed.
 
 `delta_time` and `last_frame` are **not** in `AppState`. After the refactor,
 `dt` is passed explicitly to every `update(dt)` call, and `BobbingObject` owns
@@ -200,13 +213,17 @@ and a list of `ParticleEmitter`s.
 
 ```python
 class SceneObject:
-    loc_model: int = None
-    loc_color: int = None
+    loc_model:      int = None
+    loc_color:      int = None
+    loc_view:       int = None
+    loc_projection: int = None
 
     @classmethod
     def init_gl(cls, program):
-        cls.loc_model = glGetUniformLocation(program, "model")
-        cls.loc_color = glGetUniformLocation(program, "color")
+        cls.loc_model      = glGetUniformLocation(program, "model")
+        cls.loc_color      = glGetUniformLocation(program, "color")
+        cls.loc_view       = glGetUniformLocation(program, "view")
+        cls.loc_projection = glGetUniformLocation(program, "projection")
 
     def __init__(self, config: ObjectConfig, transform: Transform = None):
         self.cfg       = config
@@ -250,6 +267,19 @@ The anchor lives on the emitter — the thing being positioned — not on the
 config. `SceneObject.update()` repositions every emitter with a non-None
 anchor. No index magic, any number of anchored emitters per object.
 
+### `_make_emitter`
+
+Helper defined in `objects.py` — constructs a `ParticleEmitter` and sets its
+anchor in one call. Used by `OrbitalGroup` factory lambdas in `scene.py`.
+
+```python
+def _make_emitter(anchor, **kwargs) -> ParticleEmitter:
+    """Construct a ParticleEmitter and set its anchor in one call."""
+    e = ParticleEmitter(**kwargs)
+    e.anchor = anchor
+    return e
+```
+
 ---
 
 ## Behavior subclasses
@@ -270,6 +300,9 @@ class BobbingObject(SceneObject):
         self.speed     = speed
 
     def update(self, dt):
+        # NOTE: _time is accumulated dt, not wall-clock time. This differs from
+        # the old state.last_frame (which was absolute). Bob phase will diverge
+        # if dt is clamped or the session is very long, but is otherwise equivalent.
         self._time += dt
         t = self.speed * self._time
         self.transform.pos[1] = self.base_y + self.amplitude * (
@@ -312,6 +345,9 @@ class PlayerBoat(BobbingObject):
         super().__init__(config, transform, base_y=base_y)
         self.moving_forward = False   # set each frame by input handler
 
+        # Emitter params are hardcoded here: PlayerBoat is a singleton and these
+        # values won't be reused. For multi-instance objects use the make_emitter
+        # factory pattern (as in OrbitalGroup).
         self._smoke    = ParticleEmitter(base_pos=[0,0,0], color=(0.55,0.55,0.55,1),
                                          spawn_rate=2.0, lifetime=2.0,
                                          velocity=(0,1.2,0), max_scale=0.12)
@@ -366,10 +402,15 @@ COQUEIRO_SCALE_SPEED = 0.18
 
 keys_pressed = set()   # moved from state.py
 _target      = None    # PlayerBoat reference
+_coqueiros   = []      # list of coqueiro SceneObjects
 
 def set_target(boat):
     global _target
     _target = boat
+
+def set_coqueiros(trees):
+    global _coqueiros
+    _coqueiros = list(trees)
 
 def key_event(window, key, scancode, action, mods):
     # (wireframe toggle needs app reference — pass via set_app or module-level)
@@ -398,26 +439,42 @@ def process_boat(dt):
         _target.transform.pos[0] -= dx * BOAT_SPEED * dt
         _target.transform.pos[2] -= dz * BOAT_SPEED * dt
 
-def process_coqueiro_scale(dt, app):
+def process_coqueiro_scale(dt):
     sp = COQUEIRO_SCALE_SPEED * dt
     if glfw.KEY_Z in keys_pressed:
-        app.coqueiro_scale = min(COQUEIRO_SCALE_MAX, app.coqueiro_scale + sp)
+        for tree in _coqueiros:
+            tree.transform.scale = min(COQUEIRO_SCALE_MAX, tree.transform.scale + sp)
     if glfw.KEY_X in keys_pressed:
-        app.coqueiro_scale = max(COQUEIRO_SCALE_MIN, app.coqueiro_scale - sp)
+        for tree in _coqueiros:
+            tree.transform.scale = max(COQUEIRO_SCALE_MIN, tree.transform.scale - sp)
 ```
 
 `process_boat` uses `_target.transform.heading` directly — not
 `rotations[0][0]` — because `heading` is the explicitly maintained Y-angle
-field. The coupling between input and scene is now explicit and visible:
-`set_target` documents what the input module depends on.
+field. `process_coqueiro_scale` writes directly to each tree's
+`transform.scale` — same pattern as the boat, no shared state needed.
+The coupling between input and scene is now explicit and visible:
+`set_target` and `set_coqueiros` document what the input module depends on.
 
 ---
 
 ## `OrbitalGroup` — a container, not a subclass
 
 `OrbitalGroup` is not a `SceneObject`. It owns N independent `SceneObject`
-instances, each with its own `Transform`. The scene treats it as a duck-typed
-object with `update(dt)` and `draw()`.
+instances, each with its own `Transform`. The scene treats it via duck typing —
+the same `update(dt)` / `draw()` interface as `SceneObject`. This contract is
+made explicit with a `Protocol`:
+
+```python
+from typing import Protocol
+
+class Drawable(Protocol):
+    def update(self, dt: float) -> None: ...
+    def draw(self) -> None: ...
+```
+
+`Scene.objects` is annotated `list[Drawable]`, so a type checker will catch
+it if `OrbitalGroup` ever drifts from the interface.
 
 ```python
 class OrbitalGroup:
@@ -525,8 +582,8 @@ SHARK_FIN = ObjectConfig(
 
 ## `scene.py` — assembly
 
-Camera setup moves here from `state.py`. `update` takes `app` to read
-`coqueiro_scale` — the one value that crosses the input/scene boundary.
+Camera setup moves here from `state.py`. `update(dt)` takes no `app` —
+coqueiro scaling is handled in `input.py` before `update` is called.
 
 ```python
 class Scene:
@@ -585,9 +642,10 @@ class Scene:
     def get_player_boat(self):
         return next(o for o in self.objects if isinstance(o, PlayerBoat))
 
-    def update(self, dt, app):
-        for tree in self._coqueiros:
-            tree.transform.scale = app.coqueiro_scale
+    def get_coqueiros(self):
+        return self._coqueiros
+
+    def update(self, dt):
         for obj in self.objects:
             obj.update(dt)
 
@@ -596,13 +654,13 @@ class Scene:
             obj.draw()
 
     def set_view_projection(self):
-        glUniformMatrix4fv(SceneObject.loc_model, 1, GL_TRUE, self._mat_view)
+        glUniformMatrix4fv(SceneObject.loc_view,       1, GL_TRUE, self._mat_view)
         glUniformMatrix4fv(SceneObject.loc_projection, 1, GL_TRUE, self._mat_proj)
 ```
 
-`get_player_boat()` is called once in `main_scene.py` to bind the boat to
-the input handler. `update` takes `app` explicitly — the dependency is declared
-in the signature.
+`get_player_boat()` and `get_coqueiros()` are called once in `main_scene.py`
+to bind objects to the input handler. `update(dt)` takes no `app` — coqueiro
+scaling is handled entirely in `input.py` by the time `update` runs.
 
 ---
 
@@ -612,11 +670,12 @@ in the signature.
 app   = AppState()
 scene = Scene(program, app)
 inp.set_target(scene.get_player_boat())
+inp.set_coqueiros(scene.get_coqueiros())
 
 # per-frame loop:
 inp.process_boat(dt)
-inp.process_coqueiro_scale(dt, app)
-scene.update(dt, app)
+inp.process_coqueiro_scale(dt)
+scene.update(dt)
 scene.draw_all()
 ```
 
@@ -629,8 +688,8 @@ scene.draw_all()
 | `geometry.py` | None. Clean already. |
 | `particles.py` | One line: `self.anchor = None` in `__init__`. |
 | `state.py` | **Deleted.** Contents redistributed (see surgery section). |
-| `input.py` | Gains `set_target`, `keys_pressed`, boat constants; writes to `target.transform`. |
-| `main_scene.py` | Creates `AppState`; calls `inp.set_target`; passes `app` to `scene.update`. |
+| `input.py` | Gains `set_target`, `set_coqueiros`, `keys_pressed`, boat/coqueiro constants; writes directly to `target.transform` and `tree.transform.scale`. |
+| `main_scene.py` | Creates `AppState`; calls `inp.set_target` and `inp.set_coqueiros`; calls `scene.update(dt)` without `app`. |
 
 ---
 
@@ -649,8 +708,10 @@ Each step leaves the program runnable.
 4. **Create `src/configs.py`** — all `ObjectConfig` instances, importing from
    `objects.py` and `geometry.py` only.
 
-5. **Update `input.py`** — add `set_target`, move `keys_pressed` and constants here,
-   rewrite `process_boat` to write to `_target.transform`. Remove `state` imports.
+5. **Update `input.py`** — add `set_target` and `set_coqueiros`, move `keys_pressed`
+   and constants here, rewrite `process_boat` to write to `_target.transform`,
+   rewrite `process_coqueiro_scale` to write directly to `tree.transform.scale`.
+   Remove `state` imports.
 
 6. **Wire `OrbitalGroup`** for sharks and horizon boats alongside the existing
    scene. Verify orbit positions, facing, and emitter smoke visually.
@@ -662,4 +723,5 @@ Each step leaves the program runnable.
    move camera setup in; pass `app` to `update`. Full visual regression pass.
 
 9. **Delete `state.py`** — at this point nothing should import it. Fix any remaining
-   references. `main_scene.py` creates `AppState` and wires everything.
+   references. `main_scene.py` creates `AppState`, calls `inp.set_target` and
+   `inp.set_coqueiros`, and calls `scene.update(dt)` without `app`.
