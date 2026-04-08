@@ -182,12 +182,90 @@ class Scene:
             -sx * math.sin(a) + sz * math.cos(a) + tz,
         )
 
-    def _draw_coqueiro_parts(self, mat):
+    @staticmethod
+    def _orbit_instances(count, center, radius, base_angle):
+        """Yield (x, z, orbit_deg) for each evenly-spaced instance around a circular orbit."""
+        for i in range(count):
+            deg = base_angle + i * (360.0 / count)
+            rad = math.radians(deg)
+            yield center[0] + radius * math.sin(rad), center[2] + radius * math.cos(rad), deg
+
+    def _draw_parts(self, parts, colors, mat, default=(1.0, 1.0, 1.0, 1.0)):
+        """Set the model matrix and draw each named part with its corresponding color."""
         glUniformMatrix4fv(self.loc_model, 1, GL_TRUE, mat)
-        for name, (start, count) in geometry.coqueiro_parts.items():
-            color = self.COQUEIRO_PART_COLORS.get(name, (1.0, 1.0, 1.0, 1.0))
-            glUniform4f(self.loc_color, *color)
+        for name, (start, count) in parts.items():
+            glUniform4f(self.loc_color, *colors.get(name, default))
             glDrawArrays(GL_TRIANGLES, start, count)
+
+    def _update_emitter_positions(self):
+        """Reposition all particle emitters to match the current frame's object transforms.
+
+        Called once per frame before particle update/draw so that draw functions
+        remain pure render operations with no state side effects.
+        """
+        # Boat: smoke from chimney top, bow spray from bow point
+        s = self.BOAT_SCALE
+        t = self.BOAT_BOB_SPEED * state.last_frame
+        bob = self.BOAT_BOB_AMPLITUDE * (
+            0.6 * math.sin(t) + 0.4 * math.sin(2.3 * t + 0.8)
+        )
+        self.boat_smoke.base_pos = list(
+            self._local_to_world(
+                self.CHIMNEY_TOP_LOCAL,
+                s,
+                state.boat_angle,
+                state.boat_x,
+                self.BOAT_BASE_Y + bob,
+                state.boat_z,
+            )
+        )
+        wx, wy, wz = self._local_to_world(
+            self.BOW_LOCAL,
+            s,
+            state.boat_angle,
+            state.boat_x,
+            self.BOAT_BASE_Y + bob,
+            state.boat_z,
+        )
+        angle_rad = math.radians(state.boat_angle)
+        lat = self.BOW_SPRAY_SPEED
+        bwd = self.BOW_BACKWARD_SPEED
+        self.bow_port.base_pos = [wx, wy, wz]
+        self.bow_port.velocity = [
+            -math.cos(angle_rad) * lat - math.sin(angle_rad) * bwd,
+            0.0,
+            math.sin(angle_rad) * lat - math.cos(angle_rad) * bwd,
+        ]
+        self.bow_starboard.base_pos = [wx, wy, wz]
+        self.bow_starboard.velocity = [
+            math.cos(angle_rad) * lat - math.sin(angle_rad) * bwd,
+            0.0,
+            -math.sin(angle_rad) * lat - math.cos(angle_rad) * bwd,
+        ]
+
+        # Sharks: trail emitter follows each fin
+        for i, (x, z, _) in enumerate(
+            self._orbit_instances(
+                self.SHARK_COUNT, self.SHARK_CENTER, self.SHARK_RADIUS, state.shark_angle
+            )
+        ):
+            self.shark_trails[i].base_pos = [x, self.SHARK_CENTER[1], z]
+
+        # Horizon boats: smoke emitter follows each chimney top
+        s_hb = self.HORIZON_BOAT_SCALE
+        for i, (x, z, deg) in enumerate(
+            self._orbit_instances(
+                self.HORIZON_BOAT_COUNT,
+                self.HORIZON_BOAT_CENTER,
+                self.HORIZON_BOAT_RADIUS,
+                state.horizon_boat_angle,
+            )
+        ):
+            self.horizon_boat_smokes[i].base_pos = list(
+                self._local_to_world(
+                    self.CHIMNEY_TOP_LOCAL, s_hb, 90.0 + deg, x, self.BOAT_BASE_Y, z
+                )
+            )
 
     def _update_and_draw_particles(self):
         self.boat_smoke.update(state.delta_time)
@@ -222,67 +300,41 @@ class Scene:
     def draw_sharks(self):
         """Draw SHARK_COUNT fins evenly distributed around a circular orbit.
 
-        Each fin is rotated to face its direction of travel. Also updates each
-        shark trail emitter's position to follow its fin.
+        Each fin is rotated to face its direction of travel.
         """
         glUniform4f(self.loc_color, 0.25, 0.25, 0.30, 1.0)
         s = self.SHARK_FIN_SCALE
-        for i in range(self.SHARK_COUNT):
-            orbit_deg = state.shark_angle + i * (360.0 / self.SHARK_COUNT)
-            orbit_rad = math.radians(orbit_deg)
-            x = self.SHARK_CENTER[0] + self.SHARK_RADIUS * math.sin(orbit_rad)
-            z = self.SHARK_CENTER[2] + self.SHARK_RADIUS * math.cos(orbit_rad)
+        for x, z, deg in self._orbit_instances(
+            self.SHARK_COUNT, self.SHARK_CENTER, self.SHARK_RADIUS, state.shark_angle
+        ):
             glUniformMatrix4fv(
                 self.loc_model,
                 1,
                 GL_TRUE,
                 model_matrix(
-                    angle=orbit_deg,
-                    ry=1.0,
-                    tx=x,
-                    ty=self.SHARK_CENTER[1],
-                    tz=z,
-                    sx=s,
-                    sy=s,
-                    sz=s,
+                    angle=deg, ry=1.0, tx=x, ty=self.SHARK_CENTER[1], tz=z,
+                    sx=s, sy=s, sz=s,
                 ),
             )
             glDrawArrays(GL_TRIANGLES, geometry.start_fin, geometry.count_fin)
-            self.shark_trails[i].base_pos = [x, self.SHARK_CENTER[1], z]
 
     def draw_horizon_boats(self):
         """Draw HORIZON_BOAT_COUNT boats evenly distributed around a circular orbit.
 
         Each boat faces the tangent of its orbit so it appears to sail forward.
-        Also updates each chimney smoke emitter's position to follow its boat.
         """
         s = self.HORIZON_BOAT_SCALE
-        cx, _, cz = self.HORIZON_BOAT_CENTER
-        for i in range(self.HORIZON_BOAT_COUNT):
-            orbit_deg = state.horizon_boat_angle + i * (360.0 / self.HORIZON_BOAT_COUNT)
-            orbit_rad = math.radians(orbit_deg)
-            x = cx + self.HORIZON_BOAT_RADIUS * math.sin(orbit_rad)
-            z = cz + self.HORIZON_BOAT_RADIUS * math.cos(orbit_rad)
-            facing = 90.0 + orbit_deg
+        for x, z, deg in self._orbit_instances(
+            self.HORIZON_BOAT_COUNT,
+            self.HORIZON_BOAT_CENTER,
+            self.HORIZON_BOAT_RADIUS,
+            state.horizon_boat_angle,
+        ):
             mat = model_matrix(
-                angle=facing, ry=1.0, tx=x, ty=self.BOAT_BASE_Y, tz=z, sx=s, sy=s, sz=s
+                angle=90.0 + deg, ry=1.0, tx=x, ty=self.BOAT_BASE_Y, tz=z,
+                sx=s, sy=s, sz=s,
             )
-            glUniformMatrix4fv(self.loc_model, 1, GL_TRUE, mat)
-            for name, (start, count) in geometry.boat_parts.items():
-                color = self.HORIZON_BOAT_PART_COLORS.get(name, (1.0, 1.0, 1.0, 1.0))
-                glUniform4f(self.loc_color, *color)
-                glDrawArrays(GL_TRIANGLES, start, count)
-
-            self.horizon_boat_smokes[i].base_pos = list(
-                self._local_to_world(
-                    self.CHIMNEY_TOP_LOCAL,
-                    s,
-                    facing,
-                    x,
-                    self.BOAT_BASE_Y,
-                    z,
-                )
-            )
+            self._draw_parts(geometry.boat_parts, self.HORIZON_BOAT_PART_COLORS, mat)
 
     def draw_sun(self):
         glUniform4f(self.loc_color, 1.0, 0.85, 0.10, 1.0)
@@ -323,7 +375,7 @@ class Scene:
             m = glm.rotate(m, math.radians(angle), glm.vec3(0, 1, 0))
             m = glm.rotate(m, math.radians(tilt), glm.vec3(1, 0, 0))
             m = glm.scale(m, glm.vec3(s, s, s))
-            self._draw_coqueiro_parts(np.array(m))
+            self._draw_parts(geometry.coqueiro_parts, self.COQUEIRO_PART_COLORS, np.array(m))
 
     def draw_lighthouse(self):
         s = self.LIGHTHOUSE_SCALE
@@ -335,11 +387,7 @@ class Scene:
             sy=s,
             sz=s,
         )
-        glUniformMatrix4fv(self.loc_model, 1, GL_TRUE, mat)
-        for name, (start, count) in geometry.lh_parts.items():
-            color = self.LH_PART_COLORS.get(name, (1.0, 1.0, 1.0, 1.0))
-            glUniform4f(self.loc_color, *color)
-            glDrawArrays(GL_TRIANGLES, start, count)
+        self._draw_parts(geometry.lh_parts, self.LH_PART_COLORS, mat)
 
     def draw_volcano(self):
         glUniform4f(self.loc_color, 0.35, 0.30, 0.28, 1.0)
@@ -354,12 +402,10 @@ class Scene:
         glDrawArrays(GL_TRIANGLES, geometry.start_volcano, geometry.count_volcano)
 
     def draw_boat(self):
-        """Draw the player boat with a bobbing animation and update its particle emitters.
+        """Draw the player boat with a bobbing animation.
 
         Computes a bob offset from a two-frequency sine wave and applies it to the
-        model matrix. Also repositions the chimney smoke emitter to the chimney top
-        and updates the bow spray emitters with the correct world position and
-        sideways/backward velocity based on the current heading.
+        model matrix.
         """
         s = self.BOAT_SCALE
         t = self.BOAT_BOB_SPEED * state.last_frame
@@ -377,50 +423,7 @@ class Scene:
             sy=s,
             sz=s,
         )
-        glUniformMatrix4fv(self.loc_model, 1, GL_TRUE, mat)
-        for name, (start, count) in geometry.boat_parts.items():
-            color = self.BOAT_PART_COLORS.get(name, (1.0, 1.0, 1.0, 1.0))
-            glUniform4f(self.loc_color, *color)
-            glDrawArrays(GL_TRIANGLES, start, count)
-
-        self.boat_smoke.base_pos = list(
-            self._local_to_world(
-                self.CHIMNEY_TOP_LOCAL,
-                s,
-                state.boat_angle,
-                state.boat_x,
-                self.BOAT_BASE_Y + bob,
-                state.boat_z,
-            )
-        )
-
-        wx3, wy3, wz3 = self._local_to_world(
-            self.BOW_LOCAL,
-            s,
-            state.boat_angle,
-            state.boat_x,
-            self.BOAT_BASE_Y + bob,
-            state.boat_z,
-        )
-
-        # Each spray shoots outward to its side and backward, relative to the boat's heading
-        angle_rad = math.radians(state.boat_angle)
-        lat = self.BOW_SPRAY_SPEED
-        bwd = self.BOW_BACKWARD_SPEED
-        right = [
-            math.cos(angle_rad) * lat - math.sin(angle_rad) * bwd,
-            0.0,
-            -math.sin(angle_rad) * lat - math.cos(angle_rad) * bwd,
-        ]
-        left = [
-            -math.cos(angle_rad) * lat - math.sin(angle_rad) * bwd,
-            0.0,
-            math.sin(angle_rad) * lat - math.cos(angle_rad) * bwd,
-        ]
-        self.bow_port.base_pos = [wx3, wy3, wz3]
-        self.bow_port.velocity = left
-        self.bow_starboard.base_pos = [wx3, wy3, wz3]
-        self.bow_starboard.velocity = right
+        self._draw_parts(geometry.boat_parts, self.BOAT_PART_COLORS, mat)
 
     def draw_all(self):
         self.draw_sea()
@@ -432,4 +435,5 @@ class Scene:
         self.draw_lighthouse()
         self.draw_volcano()
         self.draw_boat()
+        self._update_emitter_positions()
         self._update_and_draw_particles()
