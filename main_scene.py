@@ -72,8 +72,8 @@ while not glfw.window_should_close(window):
     state.last_frame = now
 
     glfw.poll_events()
-    inp.process_coqueiro_scale()
-    inp.process_boat()
+    inp.process_coqueiro_scale(state.delta_time)
+    inp.process_boat(state.delta_time)
     state.shark_angle += scene.SHARK_SPEED * state.delta_time
     state.horizon_boat_angle += scene.HORIZON_BOAT_SPEED * state.delta_time
     state.sun_spin += state.SUN_SPIN_SPEED * state.delta_time
