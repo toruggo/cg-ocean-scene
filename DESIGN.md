@@ -3,238 +3,343 @@
 ## Philosophy
 
 > "The class defines *behavior*, the data comes from outside."
-> — philosophy.md
-
-A `Boat` that can only ever be orange is a disguised constant, not a reusable object.
-The clean split is: **dataclass for configuration, class for behavior**.
 
 Config says *what* something looks like and where it starts.
-Class says *how* something moves and updates.
-Neither knows about the other's concerns.
+Transform says *where* it is and how it is oriented right now.
+Class says *how* it moves and updates over time.
+None of these three concerns belongs in the same object.
 
 ---
 
-## Current problems
+## Problems in the original DESIGN.md (v1)
 
-| Symptom | Root cause |
-|---|---|
-| `BOAT_PART_COLORS`, `LH_PART_COLORS`, etc. are class-level dicts on `Scene` | Visual identity is baked into behavior code |
-| `draw_boat()` mixes matrix math, GL calls, and particle positioning | Draw functions have multiple responsibilities |
-| Adding a new object requires a new `draw_X()` method and wiring in `draw_all()` | No uniform object protocol |
-| Player boat and horizon boats share the same mesh but can't share code | Config and behavior are fused |
+The first version made several mistakes that philosophy_2.md corrects:
+
+| Problem | Cause | Fix |
+|---|---|---|
+| `TiltedObject` exists just to add a second rotation | `build_matrix()` was too rigid — one rotation hardcoded | `Transform.rotations` list; no subclass needed |
+| `ObjectConfig` held `pos`, `scale`, `angle` | Transform data mixed with visual identity | Split into `ObjectConfig` (identity) and `Transform` (placement) |
+| `OrbitalGroup` mutates `self.pos` in `draw()` | Subclassing an object that draws one thing to draw N | `OrbitalGroup` becomes a container owning N `SceneObject` instances |
+| Volcano smoke orphaned as a bare emitter on `Scene` | "no subclass whose `update()` would reposition it" — but base class already does | Attach emitter to the volcano's `SceneObject`; base class handles it |
+
+After fixes, only three genuine behavior subclasses remain:
+`BobbingObject`, `SpinningSun`, `PlayerBoat` — each exists because it has
+per-frame logic, not because the base class couldn't express its transform.
 
 ---
 
 ## Target architecture
 
-Three new modules replace the monolithic `scene.py`:
-
 ```
 src/
-  objects.py   # ObjectConfig dataclass + SceneObject base + behavior subclasses
-  configs.py   # One ObjectConfig instance per visual identity
-  scene.py     # Scene.__init__ wires configs into objects; draw_all loops
+  objects.py   # Transform, ObjectConfig, SceneObject, behavior subclasses, OrbitalGroup
+  configs.py   # One ObjectConfig per visual identity
+  scene.py     # Wires configs + transforms into objects; loops update/draw
 ```
 
-`geometry.py`, `state.py`, `particles.py`, and `input.py` are **unchanged**.
+`geometry.py`, `state.py`, `particles.py`, `input.py` are unchanged.
 
 ---
 
-## `objects.py`
+## Core abstractions
+
+### `Transform`
+
+A composable, mutable value object that owns an object's current placement.
+Separated from `ObjectConfig` because config is shared between instances
+(the player boat and a horizon boat can share the same mesh/colors config)
+while transform is per-instance and mutated every frame.
+
+```python
+@dataclass
+class Transform:
+    pos:       list  = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    scale:     float = 1.0
+    scale_xyz: tuple = None                    # overrides scale when non-uniform
+    rotations: list  = field(default_factory=list)  # [(angle_deg, (rx,ry,rz)), ...]
+
+    def to_matrix(self) -> np.ndarray:
+        m = glm.translate(glm.mat4(1.0), glm.vec3(*self.pos))
+        for angle, axis in self.rotations:
+            m = glm.rotate(m, math.radians(angle), glm.vec3(*axis))
+        sx, sy, sz = self.scale_xyz or (self.scale,) * 3
+        m = glm.scale(m, glm.vec3(sx, sy, sz))
+        return np.array(m)
+
+    @property
+    def y_rotation(self) -> float:
+        """Return the first Y-axis rotation angle, or 0. Used for emitter anchoring."""
+        for angle, axis in self.rotations:
+            if abs(axis[1]) > 0.9:
+                return angle
+        return 0.0
+```
+
+With `rotations` as a list, coqueiros need no subclass — just two entries:
+
+```python
+tree.transform.rotations = [(2.3, (0,1,0)), (0.0, (1,0,0))]
+```
 
 ### `ObjectConfig`
+
+Visual identity only. Immutable. Shared safely between instances.
+No transform fields.
 
 ```python
 @dataclass
 class ObjectConfig:
-    pos:            tuple = (0.0, 0.0, 0.0)
-    scale:          float = 1.0
-    scale_xyz:      tuple | None = None        # overrides scale when non-uniform (e.g. sea)
-    angle:          float = 0.0
     default_color:  tuple = (1.0, 1.0, 1.0, 1.0)
     part_colors:    dict  = field(default_factory=dict)
-    geometry_parts: dict  = None               # multi-part mesh: name → (start, count)
-    geometry_range: tuple = None               # single mesh: (start, count)
+    geometry_parts: dict  = None          # name → (start, count)
+    geometry_range: tuple = None          # (start, count) for single-mesh objects
+    emitter_anchor: tuple = None          # local-space point for a follow-emitter
 ```
 
-`scale_xyz` exists only for the sea (sx=40, sy=1, sz=50). All other objects use
-uniform `scale`. `SceneObject.build_matrix()` checks `scale_xyz` first.
+`emitter_anchor` is the local-space point (e.g. chimney top) that the base
+`SceneObject.update()` transforms to world space and uses to reposition
+`emitters[0]` each frame. This handles smoke on horizon boats with no subclass.
 
 ### `SceneObject`
 
-Base class. Holds a config, owns a list of `ParticleEmitter`s, and provides
-the default draw/update protocol.
+Base class. Holds a config and a transform. Owns a list of `ParticleEmitter`s.
 
 ```python
 class SceneObject:
-    def __init__(self, config, loc_model, loc_color): ...
-
-    def build_matrix(self) -> np.ndarray:
-        # Builds TRS from self.pos, self.angle, self.scale / self.scale_xyz
+    def __init__(self, config: ObjectConfig, loc_model, loc_color,
+                 transform: Transform = None):
+        self.cfg       = config
+        self.transform = transform or Transform()
+        self.loc_model = loc_model
+        self.loc_color = loc_color
+        self.emitters  = []
 
     def draw(self):
-        # Sets model uniform, dispatches geometry_parts or geometry_range,
-        # then draws each emitter.
+        glUniformMatrix4fv(self.loc_model, 1, GL_TRUE, self.transform.to_matrix())
+        if self.cfg.geometry_parts:
+            for name, (start, count) in self.cfg.geometry_parts.items():
+                glUniform4f(self.loc_color, *self.cfg.part_colors.get(name, self.cfg.default_color))
+                glDrawArrays(GL_TRIANGLES, start, count)
+        elif self.cfg.geometry_range:
+            glUniform4f(self.loc_color, *self.cfg.default_color)
+            glDrawArrays(GL_TRIANGLES, *self.cfg.geometry_range)
+        for e in self.emitters:
+            e.draw(self.loc_model, self.loc_color)
 
     def update(self, dt):
-        # Calls e.update(dt) for each emitter.
+        if self.cfg.emitter_anchor and self.emitters:
+            self.emitters[0].base_pos = list(_local_to_world(
+                self.cfg.emitter_anchor,
+                self.transform.scale,
+                self.transform.y_rotation,
+                *self.transform.pos,
+            ))
+        for e in self.emitters:
+            e.update(dt)
 ```
-
-`self.pos`, `self.scale`, and `self.angle` start from config but are **mutable**
-at runtime — subclasses update them in `update()` to animate.
-
-### Behavior subclasses
-
-#### `BobbingObject(SceneObject)`
-
-Animates `self.pos[1]` with a two-frequency sine wave each frame.
-Parameters: `base_y`, `bob_amplitude`, `bob_speed`.
-
-```python
-def update(self, dt):
-    t = self.bob_speed * state.last_frame
-    self.pos[1] = self.base_y + self.bob_amplitude * (
-        0.6 * math.sin(t) + 0.4 * math.sin(2.3 * t + 0.8)
-    )
-    super().update(dt)
-```
-
-Any floating object (player boat, could add buoys, debris, etc.) inherits this.
 
 ---
 
-#### `OrbitalGroup(SceneObject)`
+## Behavior subclasses
 
-Draws `count` copies of the same mesh evenly around a circle.
-Parameters: `count`, `radius`, `center`, `speed`, `facing_offset`.
+Only three. Each exists because it has genuine per-frame logic.
 
-`facing_offset=0.0` for sharks (fin faces travel direction naturally).
-`facing_offset=90.0` for horizon boats (boat mesh needs +90° to face tangent).
+### `BobbingObject(SceneObject)`
+
+Animates `transform.pos[1]` with a two-frequency sine wave.
+Any water-floating object inherits this.
 
 ```python
-def update(self, dt):
-    self.orbit_angle += self.speed * dt
-    super().update(dt)    # advances emitters
+class BobbingObject(SceneObject):
+    def __init__(self, config, loc_model, loc_color, transform=None,
+                 base_y=0.4, amplitude=0.10, speed=1.5):
+        super().__init__(config, loc_model, loc_color, transform)
+        self.base_y    = base_y
+        self.amplitude = amplitude
+        self.speed     = speed
 
-def draw(self):
-    for i in range(self.count):
-        deg = self.orbit_angle + i * (360.0 / self.count)
-        rad = math.radians(deg)
-        self.pos[0] = self.center[0] + self.radius * math.sin(rad)
-        self.pos[2] = self.center[2] + self.radius * math.cos(rad)
-        self.angle  = self.facing_offset + deg
-        super().draw()
+    def update(self, dt):
+        t = self.speed * state.last_frame
+        self.transform.pos[1] = self.base_y + self.amplitude * (
+            0.6 * math.sin(t) + 0.4 * math.sin(2.3 * t + 0.8)
+        )
+        super().update(dt)
 ```
 
-Note: `OrbitalGroup` does **not** own its `orbit_angle` from state — it owns it
-internally and updates it via `speed * dt`. The global `state.shark_angle` and
-`state.horizon_boat_angle` become **obsolete**; the objects track their own phase.
+### `SpinningSun(SceneObject)`
+
+Exists because it updates `transform.rotations` from state each frame.
+Not because of a transform limitation — `Transform` can express this natively.
+
+```python
+class SpinningSun(SceneObject):
+    def update(self, dt):
+        self.transform.rotations = [
+            (90.0,            (1.0, 0.0, 1.0)),   # fixed tilt
+            (state.sun_spin,  (0.0, 1.0, 0.0)),   # animated spin
+        ]
+        super().update(dt)
+```
+
+### `PlayerBoat(BobbingObject)`
+
+Syncs position and heading from `state` each frame. Also handles bow spray,
+which has two emitters whose velocities depend on heading direction and cannot
+be reduced to the single `emitter_anchor` pattern.
+
+```python
+class PlayerBoat(BobbingObject):
+    def __init__(self, config, loc_model, loc_color, transform=None, base_y=0.4):
+        super().__init__(config, loc_model, loc_color, transform, base_y=base_y)
+        self._smoke     = ParticleEmitter(base_pos=[0,0,0], ...)
+        self._bow_port  = ParticleEmitter(base_pos=[0,0,0], ...)
+        self._bow_stbd  = ParticleEmitter(base_pos=[0,0,0], ...)
+        self.emitters   = [self._smoke, self._bow_port, self._bow_stbd]
+
+    def update(self, dt):
+        self.transform.pos[0]    = state.boat_x
+        self.transform.pos[2]    = state.boat_z
+        self.transform.rotations = [(state.boat_angle, (0,1,0))]
+        super().update(dt)   # bobs pos[1], repositions smoke via emitter_anchor
+        self._update_bow_spray()
+
+    def _update_bow_spray(self):
+        wx, wy, wz = _local_to_world(BOW_LOCAL, ..., *self.transform.pos)
+        angle_rad = math.radians(state.boat_angle)
+        lat, bwd  = BOW_SPRAY_SPEED, BOW_BACKWARD_SPEED
+        self._bow_port.active  = state.boat_moving_forward
+        self._bow_stbd.active  = state.boat_moving_forward
+        self._bow_port.base_pos = [wx, wy, wz]
+        self._bow_port.velocity = [
+            -math.cos(angle_rad) * lat - math.sin(angle_rad) * bwd, 0.0,
+             math.sin(angle_rad) * lat - math.cos(angle_rad) * bwd,
+        ]
+        self._bow_stbd.base_pos = [wx, wy, wz]
+        self._bow_stbd.velocity = [
+             math.cos(angle_rad) * lat - math.sin(angle_rad) * bwd, 0.0,
+            -math.sin(angle_rad) * lat - math.cos(angle_rad) * bwd,
+        ]
+```
+
+`PLAYER_BOAT` config includes `emitter_anchor=CHIMNEY_TOP_LOCAL` so
+`super().update(dt)` repositions `emitters[0]` (the smoke) automatically.
+Only bow spray needs explicit code.
 
 ---
 
-#### `TiltedObject(SceneObject)`
+## `OrbitalGroup` — a container, not a subclass
 
-Supports two-rotation matrices: Y-axis yaw + X-axis tilt.
-Used for coqueiros, which can't be expressed with the single-rotation `model_matrix()`.
+The v1 design had `OrbitalGroup` as a `SceneObject` subclass that mutated
+`self.pos` and `self.angle` in a loop inside `draw()`. This left `self.pos`
+pointing to the last instance after every draw — meaningless and fragile.
+
+`OrbitalGroup` is not a `SceneObject`. It owns N independent `SceneObject`
+instances, each with its own `Transform`. It updates them and forwards
+`draw()` calls. The scene treats it like any other object via duck typing.
 
 ```python
-def build_matrix(self) -> np.ndarray:
-    # translate → rotate Y (yaw) → rotate X (tilt) → scale
-    m = glm.translate(glm.mat4(1.0), glm.vec3(*self.pos))
-    m = glm.rotate(m, math.radians(self.angle), glm.vec3(0, 1, 0))
-    m = glm.rotate(m, math.radians(self.x_tilt), glm.vec3(1, 0, 0))
-    m = glm.scale(m, glm.vec3(self.scale, self.scale, self.scale))
-    return np.array(m)
+class OrbitalGroup:
+    def __init__(self, config, loc_model, loc_color,
+                 count=3, radius=10.0, center=(0,0,0),
+                 speed=2.0, facing_offset=0.0):
+        self.instances     = [
+            SceneObject(config, loc_model, loc_color) for _ in range(count)
+        ]
+        self.count         = count
+        self.radius        = radius
+        self.center        = center
+        self.speed         = speed
+        self.facing_offset = facing_offset
+        self.orbit_angle   = 0.0
 
-def update(self, dt):
-    self.scale = state.coqueiro_scale   # driven by global grow animation
-    super().update(dt)
+    def update(self, dt):
+        self.orbit_angle += self.speed * dt
+        for i, obj in enumerate(self.instances):
+            deg = self.orbit_angle + i * (360.0 / self.count)
+            rad = math.radians(deg)
+            obj.transform.pos[0]    = self.center[0] + self.radius * math.sin(rad)
+            obj.transform.pos[2]    = self.center[2] + self.radius * math.cos(rad)
+            obj.transform.rotations = [(self.facing_offset + deg, (0,1,0))]
+            obj.update(dt)   # handles emitter_anchor repositioning if set
+
+    def draw(self):
+        for obj in self.instances:
+            obj.draw()
 ```
 
-Three `TiltedObject` instances replace the `draw_coqueiro()` loop.
+**Facing offset:**
+- Sharks: `facing_offset=0.0` — fin mesh naturally faces travel direction
+- Horizon boats: `facing_offset=90.0` — boat mesh needs +90° to face tangent
+
+**Emitters on orbital instances:**
+Because `SceneObject.update()` handles `emitter_anchor` repositioning using the
+instance's current `transform`, each orbital instance can have a smoke emitter
+with zero extra code. `HORIZON_BOAT` config sets `emitter_anchor=CHIMNEY_TOP_LOCAL`;
+the base class does the rest.
+
+For shark trail emitters, no local offset is needed — the trail follows the fin's
+world position directly. Set `emitter_anchor=(0, 0, 0)` in `SHARK_FIN` config and
+the base class will call `_local_to_world((0,0,0), ...)`, which equals `transform.pos`.
 
 ---
 
-#### `SpinningSun(SceneObject)`
+## Coqueiro: scale animation
 
-Overrides `build_matrix()` to apply a fixed tilt (90° around (1,0,1)) followed
-by a state-driven Y-spin. Can't use `model_matrix()` for this because it only
-supports one rotation.
-
-```python
-def build_matrix(self) -> np.ndarray:
-    m = glm.translate(glm.mat4(1.0), glm.vec3(*self.pos))
-    m = glm.rotate(m, math.radians(SUN_ROT_ANGLE), glm.vec3(*SUN_ROT_AXIS))
-    m = glm.rotate(m, math.radians(state.sun_spin), glm.vec3(0, 1, 0))
-    m = glm.scale(m, glm.vec3(self.scale, self.scale, self.scale))
-    return np.array(m)
-```
-
-The fixed tilt constants live in `SpinningSun`, not in `ObjectConfig`, since they
-are purely behavioral (they describe how the sun orients itself, not what it looks like).
-
----
-
-#### `PlayerBoat(BobbingObject)`
-
-Syncs position and heading from `state` each frame, then delegates bobbing and
-emitter updates to `BobbingObject`.
+Coqueiros grow over time via `state.coqueiro_scale`. The three instances share the
+same config and geometry but each has its own two-rotation transform. The scale
+update is genuine per-frame behavior, so it belongs in a subclass:
 
 ```python
-def update(self, dt):
-    self.pos[0] = state.boat_x
-    self.pos[2] = state.boat_z
-    self.angle  = state.boat_angle
-    super().update(dt)    # applies bob to self.pos[1], updates emitters
+class GrowingObject(SceneObject):
+    """Object whose scale is driven by a state variable each frame."""
+    def __init__(self, config, loc_model, loc_color, transform=None, scale_fn=None):
+        super().__init__(config, loc_model, loc_color, transform)
+        self.scale_fn = scale_fn
+
+    def update(self, dt):
+        if self.scale_fn:
+            self.transform.scale = self.scale_fn()
+        super().update(dt)
 ```
 
-Particle emitter positions (chimney smoke, bow spray port/starboard) are computed
-in `PlayerBoat.update()` using `_local_to_world()`. The two bow spray emitters
-have their `active` flag tied to `state.boat_moving_forward` here as well.
-
-The `_local_to_world` helper moves to `objects.py` as a module-level function.
+Used as:
+```python
+GrowingObject(configs.COQUEIRO, lm, lc,
+              transform=Transform(pos=[...], rotations=[...]),
+              scale_fn=lambda: state.coqueiro_scale)
+```
 
 ---
 
 ## `configs.py`
 
-One `ObjectConfig` per visual identity. The file imports from `geometry` for mesh
-refs, but knows nothing about GL or behavior classes.
-
 ```python
-# configs.py
 from . import geometry
 from .objects import ObjectConfig
+from .scene   import CHIMNEY_TOP_LOCAL   # or move constant to objects.py
 
 SEA = ObjectConfig(
-    scale_xyz=(40.0, 1.0, 50.0),
     default_color=(0.05, 0.35, 0.65, 1.0),
     geometry_range=(geometry.start_sea, geometry.count_sea),
+    # scale_xyz lives in the Transform, not here — Transform(scale_xyz=(40,1,50))
 )
 
 ISLAND = ObjectConfig(
-    pos=(-7.0, 1.5 * 0.559, -6.0),
-    scale=1.5,
     default_color=(0.76, 0.70, 0.50, 1.0),
     geometry_range=(geometry.start_island, geometry.count_island),
 )
 
 VOLCANO = ObjectConfig(
-    pos=(7.0, 1.363, 5.0),
     default_color=(0.35, 0.30, 0.28, 1.0),
     geometry_range=(geometry.start_volcano, geometry.count_volcano),
 )
 
 SUN = ObjectConfig(
-    pos=(20.0, 12.0, -15.0),
-    scale=2.0,
     default_color=(1.0, 0.85, 0.10, 1.0),
     geometry_range=(geometry.start_sun, geometry.count_sun),
 )
 
 LIGHTHOUSE = ObjectConfig(
-    pos=(-7.0, 1.5 * 1.416, -6.0),
-    scale=0.3,
     geometry_parts=geometry.lh_parts,
     part_colors={
         "lighthouse_body":      (0.980, 0.361, 0.361, 1.0),
@@ -244,8 +349,6 @@ LIGHTHOUSE = ObjectConfig(
     },
 )
 
-# Coqueiro: three separate TiltedObject instances share this config,
-# each overriding pos/angle/x_tilt at construction time.
 COQUEIRO = ObjectConfig(
     geometry_parts=geometry.coqueiro_parts,
     part_colors={
@@ -255,8 +358,8 @@ COQUEIRO = ObjectConfig(
 )
 
 PLAYER_BOAT = ObjectConfig(
-    scale=0.6,
     geometry_parts=geometry.boat_parts,
+    emitter_anchor=CHIMNEY_TOP_LOCAL,    # base class repositions smoke emitter
     part_colors={
         "boat_bottom": (1.000, 0.608, 0.000, 1.0),
         "boat_top":    (0.922, 0.890, 0.537, 1.0),
@@ -266,9 +369,9 @@ PLAYER_BOAT = ObjectConfig(
     },
 )
 
-HORIZON_BOAT = ObjectConfig(
-    scale=0.48,                             # 0.6 * 0.8
-    geometry_parts=geometry.boat_parts,     # same mesh as PLAYER_BOAT
+HORIZON_BOAT = ObjectConfig(            # same mesh as PLAYER_BOAT, different look
+    geometry_parts=geometry.boat_parts,
+    emitter_anchor=CHIMNEY_TOP_LOCAL,
     part_colors={
         "boat_bottom": (0.22, 0.22, 0.22, 1.0),
         "boat_top":    (0.30, 0.30, 0.30, 1.0),
@@ -279,20 +382,18 @@ HORIZON_BOAT = ObjectConfig(
 )
 
 SHARK_FIN = ObjectConfig(
-    scale=0.6,
     default_color=(0.25, 0.25, 0.30, 1.0),
     geometry_range=(geometry.start_fin, geometry.count_fin),
+    emitter_anchor=(0.0, 0.0, 0.0),     # trail emitter follows the fin's world pos
 )
 ```
 
-`HORIZON_BOAT` reuses `geometry.boat_parts` with different colors — the same mesh,
-a different visual identity. This is the clearest win from the config/behavior split.
+`SEA` has no `pos` or `scale` fields — those go into `Transform` at scene assembly.
+This makes clear that scale and position are per-instance concerns, not identity.
 
 ---
 
-## `scene.py` after refactor
-
-Assembly becomes wiring:
+## `scene.py` — assembly
 
 ```python
 class Scene:
@@ -301,20 +402,45 @@ class Scene:
         lc = glGetUniformLocation(program, "color")
 
         self.objects = [
-            SceneObject(configs.SEA,        lm, lc),
-            SceneObject(configs.ISLAND,     lm, lc),
-            SceneObject(configs.VOLCANO,    lm, lc),
-            SceneObject(configs.LIGHTHOUSE, lm, lc),
-            SpinningSun(configs.SUN,        lm, lc),
-            TiltedObject(configs.COQUEIRO,  lm, lc, pos=(-9.300, 1.9984, -6.039), angle=2.3,   x_tilt=0.0),
-            TiltedObject(configs.COQUEIRO,  lm, lc, pos=(-6.989, 0.7717, -3.975), angle=27.0,  x_tilt=30.0),
-            TiltedObject(configs.COQUEIRO,  lm, lc, pos=(-10.566, 0.839, -5.779), angle=-75.8, x_tilt=30.0),
-            PlayerBoat(configs.PLAYER_BOAT, lm, lc, base_y=0.4),
-            OrbitalGroup(configs.HORIZON_BOAT, lm, lc, count=3, radius=40.0, speed=2.0,  facing_offset=90.0),
-            OrbitalGroup(configs.SHARK_FIN,    lm, lc, count=3, radius=3.0,  speed=25.0, facing_offset=0.0),
+            SceneObject(configs.SEA,
+                        transform=Transform(scale_xyz=(40.0, 1.0, 50.0))),
+            SceneObject(configs.ISLAND,
+                        transform=Transform(pos=[-7.0, 0.839, -6.0], scale=1.5)),
+            SceneObject(configs.VOLCANO,
+                        transform=Transform(pos=[7.0, 1.363, 5.0])),
+            SceneObject(configs.LIGHTHOUSE,
+                        transform=Transform(pos=[-7.0, 2.124, -6.0], scale=0.3)),
+            SpinningSun(configs.SUN,
+                        transform=Transform(pos=[20.0, 12.0, -15.0], scale=2.0)),
+            # Three coqueiros — same config, different per-instance transforms
+            GrowingObject(configs.COQUEIRO, lm, lc,
+                          transform=Transform(pos=[-9.300, 1.998, -6.039],
+                                             rotations=[(2.3, (0,1,0)), (0.0, (1,0,0))]),
+                          scale_fn=lambda: state.coqueiro_scale),
+            GrowingObject(configs.COQUEIRO, lm, lc,
+                          transform=Transform(pos=[-6.989, 0.772, -3.975],
+                                             rotations=[(27.0, (0,1,0)), (30.0, (1,0,0))]),
+                          scale_fn=lambda: state.coqueiro_scale),
+            GrowingObject(configs.COQUEIRO, lm, lc,
+                          transform=Transform(pos=[-10.566, 0.839, -5.779],
+                                             rotations=[(-75.8, (0,1,0)), (30.0, (1,0,0))]),
+                          scale_fn=lambda: state.coqueiro_scale),
+            PlayerBoat(configs.PLAYER_BOAT, lm, lc,
+                       transform=Transform(scale=0.6), base_y=0.4),
+            OrbitalGroup(configs.HORIZON_BOAT, lm, lc,
+                         count=3, radius=40.0, speed=2.0, facing_offset=90.0),
+            OrbitalGroup(configs.SHARK_FIN, lm, lc,
+                         count=3, radius=3.0,  speed=25.0, facing_offset=0.0),
         ]
 
-        self.volcano_smoke = ParticleEmitter(...)   # static; not owned by an object
+        # Volcano smoke: static emitter, world pos never changes
+        volcano = next(o for o in self.objects if o.cfg is configs.VOLCANO)
+        volcano.emitters.append(ParticleEmitter(
+            base_pos=[7.0, 1.363 + 5.6, 5.0],
+            color=(0.30, 0.28, 0.28, 1.0),
+            spawn_rate=0.3, lifetime=10.0,
+            velocity=(0.0, 0.5, 0.0), max_scale=0.7,
+        ))
 
     def update(self, dt):
         for obj in self.objects:
@@ -323,62 +449,14 @@ class Scene:
     def draw_all(self):
         for obj in self.objects:
             obj.draw()
-        self.volcano_smoke.update(state.delta_time)
-        self.volcano_smoke.draw(self.loc_model, self.loc_color)
 
-    def set_view_projection(self, mat_view, mat_proj): ...
+    def set_view_projection(self, mat_view, mat_proj):
+        glUniformMatrix4fv(self.loc_view, 1, GL_TRUE, mat_view)
+        glUniformMatrix4fv(self.loc_projection, 1, GL_TRUE, mat_proj)
 ```
 
-Adding a new scene object is one line in `__init__`. No new draw method, no wiring
+Adding a new object is one `__init__` line. No new `draw_X()` method, no wiring
 in `draw_all`.
-
----
-
-## Edge cases and decisions
-
-### Non-uniform scale (sea)
-`ObjectConfig.scale_xyz: tuple | None` overrides uniform `scale` when set.
-Only the sea uses this. `SceneObject.build_matrix()`:
-```python
-sx, sy, sz = self.scale_xyz if self.scale_xyz else (self.scale,) * 3
-```
-
-### Sun double-rotation
-`SpinningSun` overrides `build_matrix()` entirely. The fixed tilt constants
-(`SUN_ROT_ANGLE = 90.0`, `SUN_ROT_AXIS = (1, 0, 1)`) are class-level on
-`SpinningSun`, not in `ObjectConfig` — they are behavioral, not visual identity.
-
-### Coqueiro two-rotation
-`TiltedObject` overrides `build_matrix()` with translate → rotateY → rotateX → scale.
-The `x_tilt` parameter is a constructor arg, not in `ObjectConfig`.
-Three instances of `TiltedObject` with the same `COQUEIRO` config and different
-per-instance `pos/angle/x_tilt` values.
-
-### OrbitalGroup orbit angle
-`OrbitalGroup` owns `self.orbit_angle` internally, updated via `speed * dt`.
-The old `state.shark_angle` and `state.horizon_boat_angle` globals become unused
-and can be removed from `state.py`.
-
-### OrbitalGroup particle emitters
-Each `OrbitalGroup` instance receives its per-copy emitters (e.g. 3 smoke emitters
-for 3 horizon boats). In `OrbitalGroup.update()`, after computing each instance's
-world position, set `self.emitters[i].base_pos` accordingly.
-
-Because `OrbitalGroup.draw()` iterates instances, and emitters are set during
-`update()` (not `draw()`), the emitter count must match the instance count.
-Constructor creates `count` emitters and appends them to `self.emitters`.
-
-### PlayerBoat emitters
-`PlayerBoat.__init__` creates `boat_smoke`, `bow_port`, `bow_starboard` and appends
-them to `self.emitters`. `PlayerBoat.update()` repositions them using
-`_local_to_world()`, sets `bow_port.active = state.boat_moving_forward`, then calls
-`super().update(dt)` which calls `e.update(dt)` for each.
-
-### Volcano smoke
-The volcano smoke emitter is **static** (world pos never changes). It's not owned
-by a `SceneObject` because there's no `SceneObject` subclass whose `update()`
-would reposition it. It stays as a bare `ParticleEmitter` on `Scene`, as it is today.
-If a `StaticEmitterObject` subclass ever made sense, this would migrate into it.
 
 ---
 
@@ -387,8 +465,8 @@ If a `StaticEmitterObject` subclass ever made sense, this would migrate into it.
 | Module | Reason |
 |---|---|
 | `geometry.py` | Clean already. Mesh loading and `model_matrix()` are not the problem. |
-| `particles.py` | `ParticleEmitter` is already a well-contained class. |
-| `state.py` | Mostly stays. `shark_angle` and `horizon_boat_angle` are removed (owned by objects now). |
+| `particles.py` | `ParticleEmitter` is well-contained. |
+| `state.py` | Mostly unchanged. `shark_angle` and `horizon_boat_angle` become unused and are removed — their state is now owned by each `OrbitalGroup` instance. |
 | `input.py` | No changes needed. |
 | `main_scene.py` | Calls `scene.update(dt)` and `scene.draw_all()` — interface unchanged. |
 
@@ -398,21 +476,21 @@ If a `StaticEmitterObject` subclass ever made sense, this would migrate into it.
 
 Each step leaves the program runnable.
 
-1. **Create `src/objects.py`** with `ObjectConfig`, `SceneObject`, `BobbingObject`,
-   `OrbitalGroup`, `TiltedObject`, `SpinningSun`, `PlayerBoat`. No imports from
-   `scene.py`. Test: import the module, no errors.
+1. **Create `src/objects.py`** — `Transform`, `ObjectConfig`, `SceneObject`,
+   `BobbingObject`, `GrowingObject`, `SpinningSun`, `PlayerBoat`, `OrbitalGroup`.
+   No imports from `scene.py`. Verify with a simple import.
 
-2. **Create `src/configs.py`** with all `ObjectConfig` instances. Import and verify
-   each config has the correct `geometry_parts` or `geometry_range` reference.
+2. **Create `src/configs.py`** — all `ObjectConfig` instances. Verify each
+   references the correct `geometry_parts` or `geometry_range`.
 
-3. **Wire `OrbitalGroup`** for sharks and horizon boats in a scratch test. Verify
-   orbit positions and facing match the current output visually.
+3. **Bring up `OrbitalGroup`** for sharks and horizon boats alongside the existing
+   scene. Verify orbit positions, facing, and emitter smoke visually match.
 
-4. **Wire `PlayerBoat`** with smoke and spray emitters. Verify bobbing, smoke, and
-   spray match current behavior.
+4. **Bring up `PlayerBoat`** with all three emitters. Verify bobbing, chimney smoke,
+   and bow spray match existing behavior.
 
-5. **Replace `scene.py`** — swap the per-draw-function structure for the `self.objects`
-   list. Keep `set_view_projection` and `volcano_smoke` as-is.
+5. **Replace `scene.py`** — swap per-function draw code for the `self.objects` list.
+   Run and do a full visual regression pass.
 
-6. **Remove dead code** from `state.py` (`shark_angle`, `horizon_boat_angle`) and
-   from `input.py` (any code that updated those globals).
+6. **Remove dead globals** from `state.py` (`shark_angle`, `horizon_boat_angle`)
+   and the code in `input.py` / `main_scene.py` that updated them.
