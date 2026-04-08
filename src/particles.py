@@ -33,6 +33,7 @@ class ParticleEmitter:
         self.active = (
             True  # set False to pause spawning; existing particles still finish
         )
+        self.anchor = None  # local-space offset; set by owner when needed
 
         self._particles = []  # each entry: [x, y, z, age, vx, vy, vz]
         self._spawn_acc = 0.0
